@@ -1,0 +1,5 @@
+# Host-side deps for the Blender benchmark suite runners (run on the client).
+# The in-Blender scripts (engine_benchmark.py, qa_standardize_render_settings.py)
+# need only Blender's bundled Python.
+openpyxl>=3.0          # write the results .xlsx
+tomli>=1.2; python_version < "3.11"   # read benchmark_config.toml (stdlib tomllib on 3.11+)

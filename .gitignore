@@ -1,0 +1,9 @@
+# Generated at runtime
+results/
+logs/
+__pycache__/
+*.pyc
+
+# Downloaded by bootstrap.cmd from official blender.org URLs — never committed.
+blender/
+models/

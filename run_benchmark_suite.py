@@ -1,0 +1,621 @@
+"""
+run_benchmark_suite.py
+=======================
+Orchestrates engine_benchmark.py across multiple .blend models and collects
+every result into one .xlsx table. Does not change what is measured -- that
+is engine_benchmark.py's job (and, upstream of it, qa_standardize_render_
+settings.py's). This file only drives repeated invocations and harvests
+their printed output.
+
+WHY one Blender process per (model, engine)
+--------------------------------------------
+engine_benchmark.py's main() only prints its results table ONCE, after every
+engine in that process has finished (see print_table() call at the end of
+main()). If a later engine crashes the process (this has happened with EEVEE
+Next on a large model), the numbers for engines that already finished
+successfully in that same process are lost -- they were only ever held in
+memory, never printed. Running one engine per process (which the script's
+own docstring recommends for thermal/cache isolation anyway) means a crash
+in one engine only voids that single (model, engine) row; every other
+combination is unaffected and already safely on disk in its own log file.
+
+CONFIG
+------
+All machine paths and the model list live in benchmark_config.toml (next to
+this file), not in code -- see that file for the schema. CLI flags override
+individual config values for one-off runs without editing the file:
+
+  --config PATH   use a different config file entirely (e.g. per-machine)
+  --mode / --models / --engines / --warm / --timeout / --blender / --script /
+  --log-dir / --out   override the matching config value for this invocation
+
+USAGE
+-----
+  Validate the pipeline (fast, smallest scene, non-representative numbers):
+    python run_benchmark_suite.py --mode test --models hero
+
+  Full run across all default models from the config (slow -- real render times):
+    python run_benchmark_suite.py --mode full
+
+  Dry run (print the commands, execute nothing):
+    python run_benchmark_suite.py --mode test --dry-run
+
+Each invocation writes its own timestamped file by default (e.g.
+results_20260804_201228.xlsx next to results.xlsx from config), so re-running
+never overwrites or appends onto a previous run. Pass --out PATH to opt back
+into accumulating multiple runs into one fixed file instead. Within a single
+run, results are still written incrementally after every (model, engine)
+result, so a crash partway through loses nothing already measured.
+"""
+
+import argparse
+import datetime
+import os
+import subprocess
+import sys
+import time
+
+try:
+    import tomllib
+except ImportError:  # Python < 3.11
+    try:
+        import tomli as tomllib
+    except ImportError:
+        sys.exit("tomllib/tomli is required to read benchmark_config.toml "
+                  "(Python < 3.11: python -m pip install tomli)")
+
+try:
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    sys.exit("openpyxl is required: python -m pip install openpyxl")
+
+# Output parsing is decoupled into its own module (see benchmark_parse.py):
+# this runner only orchestrates + writes xlsx; it does not know the table format.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from benchmark_parse import parse_output
+
+# ---------------------------------------------------------------------------
+# Config loading -- benchmark_config.toml is the single source of truth for
+# machine paths and the model list (see that file for the documented schema).
+# Code below only supplies fallbacks for [run] tuning knobs the config is
+# allowed to omit.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "benchmark_config.toml")
+
+FALLBACK_ENGINES = ["CUDA", "OPTIX", "EEVEE"]
+FALLBACK_TEST_TIMEOUT_SEC = 600
+FALLBACK_FULL_TIMEOUT_SEC = 10800
+FALLBACK_LOG_DIR = "logs"
+FALLBACK_OUTPUT_XLSX = os.path.join("results", "results.xlsx")
+FALLBACK_MODE = "test"
+FALLBACK_RENDER_DIR = os.path.join("results", "renders")
+FALLBACK_SAVE_RENDERS = False
+
+
+def _resolve(base_dir, path):
+    """Relative config paths resolve against the config file's directory, not
+    the current working directory, so behavior doesn't depend on invoke-from-cwd."""
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir, path))
+
+
+def load_config(config_path):
+    if not os.path.isfile(config_path):
+        sys.exit(f"Config file not found: {config_path}\n"
+                  f"Pass --config to point at one, or create benchmark_config.toml "
+                  f"next to {os.path.basename(__file__)}.")
+    try:
+        with open(config_path, "rb") as f:
+            cfg = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        sys.exit(f"Could not parse {config_path}: {e}")
+
+    errors = []
+    blender = cfg.get("blender", {})
+    # Accept EITHER a single 'exe' (legacy) OR a [blender.versions] table.
+    has_exe = isinstance(blender.get("exe"), str) and blender["exe"]
+    versions = blender.get("versions", {})
+    has_versions = isinstance(versions, dict) and len(versions) > 0
+    if not has_exe and not has_versions:
+        errors.append("[blender] needs either 'exe = \"...\"' or a non-empty "
+                      "[blender.versions] table")
+    if isinstance(versions, dict):
+        for k, v in versions.items():
+            if not isinstance(v, dict):
+                errors.append(f'[blender.versions."{k}"] must be a table with exe = "..."')
+                continue
+            if not isinstance(v.get("exe"), str) or not v["exe"]:
+                errors.append(f'[blender.versions."{k}"] exe must be a non-empty string')
+            for lk in ("models", "cycles_models", "eevee_models"):
+                if lk in v and (not isinstance(v[lk], list)
+                                or any(not isinstance(m, str) for m in v[lk])):
+                    errors.append(f'[blender.versions."{k}"] {lk} must be a list of model keys')
+            for sk in ("compositor_cycles", "compositor_eevee"):
+                if sk in v and not isinstance(v[sk], str):
+                    errors.append(f'[blender.versions."{k}"] {sk} must be a model key (string)')
+        dv = blender.get("default_version")
+        if dv is not None and dv not in versions:
+            errors.append(f"[blender] default_version '{dv}' is not a key in "
+                          f"[blender.versions] ({', '.join(versions) or 'empty'})")
+    elif versions:
+        errors.append("[blender.versions] must be a table of versions")
+    if not isinstance(blender.get("script"), str) or not blender["script"]:
+        errors.append("[blender] script must be a non-empty string")
+
+    models = cfg.get("models", {})
+    # `root` is a shared path prefix, not a model -- pull it out before validating.
+    model_root = models.pop("root", None) if isinstance(models, dict) else None
+    if model_root is not None and not isinstance(model_root, str):
+        errors.append("[models].root must be a string path")
+    if not models or not isinstance(models, dict):
+        errors.append("[models] must contain at least one key = \"path.blend\"")
+    else:
+        for key, val in models.items():
+            if not isinstance(val, str) or not val:
+                errors.append(f"[models] '{key}' must be a non-empty string path")
+    # every model key a version references must exist in the catalog
+    if isinstance(versions, dict) and isinstance(models, dict):
+        for k, v in versions.items():
+            if not isinstance(v, dict):
+                continue
+            refs = (list(v.get("models", [])) + list(v.get("cycles_models", []))
+                    + list(v.get("eevee_models", [])))
+            for sk in ("compositor_cycles", "compositor_eevee"):
+                if isinstance(v.get(sk), str):
+                    refs.append(v[sk])
+            for mk in refs:
+                if mk not in models:
+                    errors.append(f'[blender.versions."{k}"] references unknown model key \'{mk}\'')
+
+    run = cfg.get("run", {})
+    if "engines" in run and (not isinstance(run["engines"], list) or not run["engines"]):
+        errors.append("[run] engines must be a non-empty list")
+    for key in ("timeout_test_sec", "timeout_full_sec", "warm"):
+        if key in run and not isinstance(run[key], int):
+            errors.append(f"[run] {key} must be an integer")
+    if "mode" in run and run["mode"] not in ("test", "full"):
+        errors.append("[run] mode must be \"test\" or \"full\"")
+    if "save_renders" in run and not isinstance(run["save_renders"], bool):
+        errors.append("[run] save_renders must be true or false")
+
+    if errors:
+        details = "\n  - ".join(errors)
+        sys.exit(f"Invalid config {config_path}:\n  - {details}")
+
+    base_dir = os.path.dirname(os.path.abspath(config_path))
+    cfg["_base_dir"] = base_dir
+    if blender.get("exe"):
+        blender["exe"] = _resolve(base_dir, blender["exe"])
+    if isinstance(blender.get("versions"), dict):
+        for _k, _v in blender["versions"].items():
+            if isinstance(_v, dict) and _v.get("exe"):
+                _v["exe"] = _resolve(base_dir, _v["exe"])
+    blender["script"] = _resolve(base_dir, blender["script"])
+    run["log_dir"] = _resolve(base_dir, run.get("log_dir", FALLBACK_LOG_DIR))
+    run["output_xlsx"] = _resolve(base_dir, run.get("output_xlsx", FALLBACK_OUTPUT_XLSX))
+    run["render_dir"] = _resolve(base_dir, run.get("render_dir", FALLBACK_RENDER_DIR))
+    run.setdefault("mode", FALLBACK_MODE)
+    run.setdefault("engines", list(FALLBACK_ENGINES))
+    run.setdefault("timeout_test_sec", FALLBACK_TEST_TIMEOUT_SEC)
+    run.setdefault("timeout_full_sec", FALLBACK_FULL_TIMEOUT_SEC)
+    run.setdefault("save_renders", FALLBACK_SAVE_RENDERS)
+    cfg["run"] = run
+    cfg["blender"] = blender
+    # Model paths resolve against [models].root (falling back to the config dir).
+    root_abs = _resolve(base_dir, model_root) if model_root else base_dir
+    cfg["models_root"] = root_abs
+    cfg["models"] = {
+        k: (v if os.path.isabs(v) else os.path.normpath(os.path.join(root_abs, v)))
+        for k, v in models.items()
+    }
+    return cfg
+
+
+def select_blender(blender_cfg, explicit_path=None, version_key=None):
+    """Pick (exe_path, version_models, label) for this run. Exe precedence:
+      1. --blender "<path>"        raw override, wins  (version_models = None)
+      2. --blender-version <key>   that version's exe + its `models` list
+      3. [blender].default_version
+      4. legacy single [blender].exe
+    version_models = the list of catalog keys the selected version should run, or
+    None (raw path / legacy exe / version with no `models`) -> caller uses all."""
+    versions = blender_cfg.get("versions") or {}
+    if explicit_path:
+        return explicit_path, None, "--blender path"
+    if versions:
+        key = version_key or blender_cfg.get("default_version")
+        if not key:
+            sys.exit("No Blender version selected: set [blender].default_version or "
+                     f"pass --blender-version <{'|'.join(sorted(versions))}>.")
+        if key not in versions:
+            sys.exit(f"--blender-version '{key}' is not in [blender.versions]. "
+                     f"Available: {', '.join(sorted(versions))}")
+        v = versions[key]
+        note = "" if version_key else " (default)"
+        return v["exe"], v.get("models"), f"Blender {key}{note}"
+    if blender_cfg.get("exe"):
+        return blender_cfg["exe"], None, "[blender].exe"
+    sys.exit("No Blender executable configured ([blender].exe or [blender.versions]).")
+
+
+def print_versions(blender_cfg):
+    versions = blender_cfg.get("versions") or {}
+    default = blender_cfg.get("default_version")
+    if not versions:
+        print(f"No [blender.versions] configured. Single exe: {blender_cfg.get('exe')}")
+        return
+    print("Configured Blender versions ([blender.versions]):")
+    for k in sorted(versions):
+        v = versions[k]
+        star = "  (default)" if k == default else ""
+        print(f"  {k}{star}")
+        print(f"       exe   : {v.get('exe')}")
+        print(f"       cycles: {', '.join(v.get('cycles_models', v.get('models', []))) or '-'}")
+        print(f"       eevee : {', '.join(v.get('eevee_models', [])) or '-'}")
+
+# ---------------------------------------------------------------------------
+# Execution  (output parsing lives in benchmark_parse.parse_output)
+# ---------------------------------------------------------------------------
+
+# Windows NTSTATUS codes commonly seen when a Blender subprocess crashes.
+_NTSTATUS = {
+    0xC0000005: "ACCESS_VIOLATION (segfault)",
+    0xC0000409: "STACK_BUFFER_OVERRUN / __fastfail (heap/stack corruption; often a GPU-driver fault)",
+    0xC00000FD: "STACK_OVERFLOW",
+    0xC0000135: "DLL_NOT_FOUND",
+    0xC0000142: "DLL_INIT_FAILED",
+    0xC000001D: "ILLEGAL_INSTRUCTION",
+    0xC0000094: "INTEGER_DIVIDE_BY_ZERO",
+}
+
+
+def decode_process_status(run_status):
+    """Human-readable description of run_one()'s run_status
+    ('OK' | 'EXIT_<n>' | 'TIMEOUT' | 'LAUNCH_FAILED' | 'DRY_RUN')."""
+    if run_status in ("OK", "DRY_RUN"):
+        return "clean exit"
+    if run_status == "TIMEOUT":
+        return "TIMEOUT (killed at the per-run ceiling)"
+    if run_status == "LAUNCH_FAILED":
+        return "LAUNCH FAILED (blender.exe not found / not runnable)"
+    if run_status.startswith("EXIT_"):
+        try:
+            code = int(run_status[5:]) & 0xFFFFFFFF
+        except ValueError:
+            return f"nonzero exit ({run_status})"
+        name = _NTSTATUS.get(code)
+        return f"exit 0x{code:08X}" + (f" {name}" if name else " (unrecognised crash code)")
+    return run_status
+
+
+def failure_status_label(run_status):
+    """Short, definitive Status-cell label for a non-clean exit."""
+    if run_status.startswith("EXIT_"):
+        return "CRASH"
+    if run_status == "TIMEOUT":
+        return "TIMEOUT"
+    if run_status == "LAUNCH_FAILED":
+        return "LAUNCH_FAIL"
+    return "ERROR"
+def build_cmd(blender_exe, benchmark_script, model_path, engine, mode, warm,
+              save_renders, render_dir, extra_args, render_tag=""):
+    # --enable-autoexec: allow the .blend's own Python (expression drivers, e.g. the
+    # camera drivers in the version splash scenes) to run. Off by default in -b/-P
+    # for security; the GUI has it via user prefs, so without it those scenes render
+    # wrong ("restricted access disallows name 'scene'"). Must precede the .blend.
+    cmd = [blender_exe, "--enable-autoexec", "-b", model_path,
+           "-P", benchmark_script, "--", "--engine", engine]
+    if mode == "test":
+        cmd.append("--test")
+    if warm is not None:
+        cmd += ["--warm", str(warm)]
+    if save_renders:
+        cmd += ["--save-renders", "--render-dir", render_dir]
+        if render_tag:
+            cmd += ["--render-tag", render_tag]   # "<version>_<model>" -> named, comparable renders
+    cmd += extra_args
+    return cmd
+
+
+def run_one(blender_exe, benchmark_script, model_key, model_path, engine, mode,
+            warm, save_renders, render_dir, extra_args, log_dir, timeout_sec, dry_run,
+            tag="", version=None):
+    cmd = build_cmd(blender_exe, benchmark_script, model_path, engine, mode, warm,
+                     save_renders, render_dir, extra_args, render_tag=f"{tag}{model_key}")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"{tag}{model_key}_{engine}_{mode}_{ts}.log")
+
+    print(f"[run] {tag}{model_key} / {engine} ({mode})  -> {os.path.basename(log_path)}")
+    if dry_run:
+        print("       " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
+        return {"model_key": model_key, "model_path": model_path, "engine_arg": engine,
+                "version": version, "mode": mode, "log_path": log_path,
+                "run_status": "DRY_RUN", "meta": {}, "rows": []}
+
+    os.makedirs(log_dir, exist_ok=True)
+    start = time.time()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout_sec)
+        text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        run_status = "OK" if proc.returncode == 0 else f"EXIT_{proc.returncode}"
+    except subprocess.TimeoutExpired as e:
+        text = (e.stdout or "") + "\n" + (e.stderr or "")
+        run_status = "TIMEOUT"
+    except FileNotFoundError as e:
+        text = str(e)
+        run_status = "LAUNCH_FAILED"
+    elapsed = time.time() - start
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    meta, rows = parse_output(text)
+    if run_status != "OK":
+        # Non-clean exit -> DEFINITIVE failure row. A crashed process may have
+        # half-printed a table; that partial scrape is not trustworthy, so we
+        # replace it with one explicit failure row rather than let it read as data.
+        label = failure_status_label(run_status)
+        rows = [{"engine_label": engine, "status": label, "cold_s": None,
+                 "warm_raw_med_s": None, "warm_den_med_s": None, "denoise_plus_s": None,
+                 "warm_raw_min_s": None, "warm_raw_max_s": None, "devices": None,
+                 "cold_render_path": None,
+                 "reason": f"{decode_process_status(run_status)} after {elapsed:.0f}s -- see log"}]
+
+    n_ok = sum(1 for r in rows if r["status"] == "OK")
+    if run_status != "OK":
+        verdict, detail = failure_status_label(run_status), decode_process_status(run_status)
+    elif n_ok:
+        verdict, detail = "OK", f"{n_ok}/{len(rows)} engine-row(s) OK"
+    else:
+        verdict, detail = ("SKIPPED" if rows else "NO DATA"), f"0/{len(rows)} OK"
+    flag = "" if verdict == "OK" else "   <<< SEE LOG"
+    print(f"       {verdict:8} {elapsed:6.1f}s  {detail}{flag}")
+    return {"model_key": model_key, "model_path": model_path, "engine_arg": engine,
+            "version": version, "mode": mode, "log_path": log_path,
+            "run_status": run_status, "meta": meta, "rows": rows}
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheet output
+# ---------------------------------------------------------------------------
+COLUMNS = [
+    "Run Started", "Version", "Model", "Mode", "Engine", "Status", "Cold (s)",
+    "Warm Raw Med (s)", "Warm Raw Min (s)", "Warm Raw Max (s)",
+    "Warm Denoised Med (s)", "Denoise+ (s)", "Cold Render Path", "Devices",
+    "Reported GPU", "Blender Build", "Resolution", "Cycles Samples",
+    "Invariants Source", "Compositor", "Reason", "Process Status", "Log File",
+]
+# "Version"      = the config version key we launched (e.g. 4.5) -- ALWAYS set, even
+#                  on a crash, so every row is attributable to a version.
+# "Blender Build"= the exact build string the run reported (e.g. 4.5.3) -- parsed
+#                  from output, so it's blank on a crashed/never-started run.
+
+
+def write_xlsx(out_path, run_started, records):
+    if os.path.exists(out_path):
+        wb = load_workbook(out_path)
+        ws = wb.active
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Results"
+        ws.append(COLUMNS)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        ws.freeze_panes = "A2"
+
+    for rec in records:
+        meta = rec["meta"]
+        for row in rec["rows"]:
+            ws.append([
+                run_started, rec.get("version"), rec["model_key"], rec["mode"],
+                row["engine_label"], row["status"], row["cold_s"], row["warm_raw_med_s"],
+                row["warm_raw_min_s"], row["warm_raw_max_s"], row["warm_den_med_s"],
+                row["denoise_plus_s"], row.get("cold_render_path"), row["devices"],
+                meta.get("gpu"), meta.get("version"), meta.get("resolution"),
+                meta.get("cycles_samples"), meta.get("invariants_source"),
+                meta.get("compositor"), row["reason"],
+                rec["run_status"], os.path.relpath(rec["log_path"], SCRIPT_DIR),
+            ])
+
+    for i, _ in enumerate(COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = 18
+    ws.column_dimensions["M"].width = 50   # Cold Render Path
+    ws.column_dimensions["N"].width = 30   # Devices
+    ws.column_dimensions["U"].width = 30   # Reason
+    ws.column_dimensions["W"].width = 40   # Log File
+
+    wb.save(out_path)
+
+
+# ---------------------------------------------------------------------------
+# CLI -- every flag here overrides the matching benchmark_config.toml value;
+# leaving a flag unset means "use whatever the config says."
+# ---------------------------------------------------------------------------
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--config", default=DEFAULT_CONFIG_PATH,
+                   help=f"path to config TOML (default: {DEFAULT_CONFIG_PATH})")
+    p.add_argument("--mode", choices=["test", "full"], default=None,
+                   help="test = --test (fast, non-representative); full = real benchmark run "
+                        "(default: [run].mode in config)")
+    p.add_argument("--suite", choices=["cycles", "eevee", "all"], default=None,
+                   help="cycles = CUDA+OptiX on each version's cycles_models; "
+                        "eevee = EEVEE on eevee_models; all = both. Default: [run].suite.")
+    p.add_argument("--models", default=None,
+                   help="comma-separated model keys from config, or full .blend paths, or 'all'. "
+                        "Default: the models listed for the selected --blender-version.")
+    p.add_argument("--engines", default=None,
+                   help="comma-separated engines to run (default: [run].engines in config)")
+    p.add_argument("--warm", type=int, default=None, help="override warm-run count passed to engine_benchmark.py")
+    p.add_argument("--timeout", type=int, default=None,
+                   help="per (model, engine) subprocess timeout in seconds (default: mode-dependent, from config)")
+    p.add_argument("--blender", default=None,
+                   help="full path to a blender.exe -- raw override, wins over --blender-version")
+    p.add_argument("--blender-version", default=None,
+                   help="select Blender by key(s) from [blender.versions], comma-separated "
+                        "(e.g. 4.5  or  3.3,4.5). Each runs its own exe + configured models.")
+    p.add_argument("--all-versions", action="store_true",
+                   help="run EVERY version in [blender.versions] (each with its own models), "
+                        "all into one results .xlsx for cross-version comparison")
+    p.add_argument("--list-versions", action="store_true",
+                   help="print the configured [blender.versions] (exe + models) and exit")
+    p.add_argument("--script", default=None, help="default: [blender].script in config")
+    p.add_argument("--log-dir", default=None, help="default: [run].log_dir in config")
+    p.add_argument("--out", default=None, help="default: [run].output_xlsx in config")
+    p.add_argument("--save-renders", action="store_true", default=None,
+                   help="write each cold frame to disk for visual comparison later "
+                        "(default: [run].save_renders in config, normally off)")
+    p.add_argument("--render-dir", default=None, help="default: [run].render_dir in config")
+    p.add_argument("--dry-run", action="store_true", help="print commands, execute nothing")
+    p.add_argument("--extra-arg", action="append", default=[],
+                   help="extra pass-through arg to engine_benchmark.py, repeatable "
+                        "(e.g. --extra-arg --compositor --extra-arg GPU)")
+    return p.parse_args()
+
+
+def resolve_models(spec, config_models):
+    if spec == "all":
+        return dict(config_models)
+    out = {}
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if token in config_models:
+            out[token] = config_models[token]
+        else:
+            key = os.path.splitext(os.path.basename(token))[0]
+            out[key] = token
+    return out
+
+
+def suites_requested(args, run_cfg):
+    """Which test suite(s) to run: 'cycles', 'eevee', or both ('all')."""
+    s = (args.suite or run_cfg.get("suite") or "cycles").lower()
+    if s == "all":
+        return ["cycles", "eevee"]
+    if s not in ("cycles", "eevee"):
+        sys.exit(f"--suite must be cycles|eevee|all (got '{s}')")
+    return [s]
+
+
+def engines_for_suite(suite, blender_cfg, args):
+    """Engines for a suite: --engines overrides; else [blender].{cycles,eevee}_engines."""
+    if args.engines:
+        return [e.strip().upper() for e in args.engines.split(",") if e.strip()]
+    key = "eevee_engines" if suite == "eevee" else "cycles_engines"
+    default = ["EEVEE"] if suite == "eevee" else ["CUDA", "OPTIX"]
+    return [e.upper() for e in (blender_cfg.get(key) or default)]
+
+
+def models_for_suite(version_cfg, suite):
+    """Catalog keys a version runs for a suite (cycles_models / eevee_models).
+    None => raw/legacy exe with no per-suite lists (caller falls back to catalog)."""
+    if not isinstance(version_cfg, dict):
+        return None
+    return version_cfg.get(f"{suite}_models", version_cfg.get("models", []))
+
+
+def main():
+    args = parse_args()
+    cfg = load_config(args.config)
+    run_cfg, blender_cfg = cfg["run"], cfg["blender"]
+
+    if args.list_versions:
+        print_versions(blender_cfg)
+        return
+
+    mode = args.mode or run_cfg["mode"]
+    requested_suites = suites_requested(args, run_cfg)
+    warm = args.warm if args.warm is not None else run_cfg.get("warm")
+    benchmark_script = args.script or blender_cfg["script"]
+    log_dir = args.log_dir or run_cfg["log_dir"]
+    save_renders = args.save_renders if args.save_renders is not None else run_cfg["save_renders"]
+    render_dir = args.render_dir or run_cfg["render_dir"]
+    timeout_sec = args.timeout or (run_cfg["timeout_test_sec"] if mode == "test" else run_cfg["timeout_full_sec"])
+
+    # Which Blender(s) to run -> list of (log_tag, exe, version_models, label).
+    #   --blender <path> : one raw exe   |  --all-versions : every configured version
+    #   --blender-version a,b : those keys  |  else : the config default_version
+    # The tag prefixes log files so the same model across versions doesn't collide.
+    all_versions = blender_cfg.get("versions") or {}
+    if args.blender:
+        exe, vm, lbl = select_blender(blender_cfg, args.blender, None)
+        selections = [(None, exe, vm, lbl)]
+    elif args.all_versions:
+        if not all_versions:
+            sys.exit("--all-versions: no [blender.versions] configured.")
+        selections = [(k, *select_blender(blender_cfg, None, k)) for k in sorted(all_versions)]
+    elif args.blender_version:
+        keys = [k.strip() for k in args.blender_version.split(",") if k.strip()]
+        selections = [(k, *select_blender(blender_cfg, None, k)) for k in keys]
+    else:
+        dk = blender_cfg.get("default_version")
+        exe, vm, lbl = select_blender(blender_cfg, None, None)
+        selections = [(dk, exe, vm, lbl)]
+
+    if not os.path.isfile(benchmark_script):
+        sys.exit(f"engine_benchmark.py not found: {benchmark_script}")
+
+    now = datetime.datetime.now()
+    run_started = now.strftime("%Y-%m-%d %H:%M:%S")
+    # One timestamped .xlsx per invocation; all versions share it, so the
+    # "Blender Version" column lets you compare across them. --out appends to a fixed file.
+    if args.out:
+        out_xlsx = args.out
+    else:
+        root, ext = os.path.splitext(run_cfg["output_xlsx"])
+        out_xlsx = f"{root}_{now.strftime('%Y%m%d_%H%M%S')}{ext or '.xlsx'}"
+    os.makedirs(os.path.dirname(os.path.abspath(out_xlsx)), exist_ok=True)
+    print(f"=== run_benchmark_suite: {len(selections)} version(s) x suites={requested_suites}  "
+          f"mode={mode} save_renders={save_renders} -> {os.path.basename(out_xlsx)} ===")
+
+    # Write after EVERY (version, suite, model, engine) result -- a crash partway
+    # (legacy Eevee, VRAM-heavy scenes) never loses what is already measured.
+    total_rows = 0
+    for vkey, blender_exe, _vm, blabel in selections:
+        if not args.dry_run and not os.path.isfile(blender_exe):
+            print(f"[warn] {blabel}: blender.exe not found, skipping version: {blender_exe}")
+            continue
+        version_cfg = all_versions.get(vkey) if vkey else None
+        for suite in requested_suites:
+            engines = engines_for_suite(suite, blender_cfg, args)
+            # per-suite models: explicit --models wins; else the version's
+            # {suite}_models list; else (raw/legacy exe) the whole catalog.
+            if args.models:
+                models = resolve_models(args.models, cfg["models"])
+            else:
+                mkeys = models_for_suite(version_cfg, suite)
+                models = (dict(cfg["models"]) if mkeys is None
+                          else {k: cfg["models"][k] for k in mkeys if k in cfg["models"]})
+            for key, path in list(models.items()):
+                if not args.dry_run and not os.path.isfile(path):
+                    print(f"[warn] {blabel}/{suite}: model '{key}' not found, skipping: {path}")
+            models = {k: v for k, v in models.items() if args.dry_run or os.path.isfile(v)}
+            if not models:
+                print(f"    {blabel} / {suite}: no models to run")
+                continue
+            tag = f"{vkey}_{suite}_" if vkey else f"{suite}_"
+            print(f"\n--- {blabel} / {suite}   engines={engines}   models={list(models)} ---")
+            for model_key, model_path in models.items():
+                for engine in engines:
+                    rec = run_one(blender_exe, benchmark_script, model_key, model_path, engine,
+                                  mode, warm, save_renders, render_dir, args.extra_arg,
+                                  log_dir, timeout_sec, args.dry_run, tag=tag, version=vkey)
+                    if not args.dry_run:
+                        write_xlsx(out_xlsx, run_started, [rec])
+                        total_rows += len(rec["rows"])
+                        print(f"       -> saved to {out_xlsx} ({total_rows} row(s) so far)")
+
+    if args.dry_run:
+        print("\n[dry-run] no results written.")
+        return
+    print(f"\n=== done: wrote {total_rows} row(s) to {out_xlsx} ===")
+
+
+if __name__ == "__main__":
+    main()

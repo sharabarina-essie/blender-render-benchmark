@@ -1,0 +1,91 @@
+# Blender render benchmark -- STANDALONE, download-bootstrapped project.
+#
+# All paths are RELATIVE to this file. `bootstrap.cmd` downloads the Blender builds
+# and models (from official blender.org URLs) into blender/ and models/. Nothing
+# large is committed; the repo is code + bootstrap + this config.
+#
+# TWO test suites (see --suite):
+#   cycles : engines CUDA + OptiX on each version's `cycles_models` (its splash scene)
+#   eevee  : engine EEVEE on each version's `eevee_models` (EEVEE demo scenes)
+# Compositor A/B picks one Cycles + one EEVEE model per version (compositor_* below).
+
+# ---------------------------------------------------------------------------
+# MODEL CATALOG  (paths relative to models/; produced by bootstrap.cmd)
+#   VERIFY = confirm the .blend name printed by bootstrap on first run.
+# ---------------------------------------------------------------------------
+[models]
+root = "models"
+# --- Cycles / splash scenes (version-matched) ---
+splash_3_1 = "blender-3.1-splash/blender3.1-splash.blend"
+splash_3_3 = "blender-3.3-splash.blend"
+splash_3_4 = "blender-3.4-splash/Blender-3.4.blend"
+splash_3_6 = "blender-3.6-splash/blender-3.6-splash/blender-3.6-splash.blend"
+splash_4_1 = "blender-4.1-splash.blend"
+splash_4_2 = "blender-4.2-splash/gold-splash_screen.blend"
+splash_4_5 = "blender-4.5-splash.blend"
+splash_5_2 = "blender-5.2-splash.blend"
+# --- EEVEE demo scenes (EEVEE-only) ---
+eevee_hatching = "eevee/hatching.blend"
+eevee_udim     = "eevee/UDIM_monster/UDIM_monster/udim-monster.blend"
+eevee_temple   = "eevee/temple.blend"
+eevee_elephant = "eevee/mr_elephant.blend"
+
+# ---------------------------------------------------------------------------
+# BLENDER VERSIONS  (bundled portable builds under blender/<version>/)
+#   cycles_models / eevee_models : catalog keys the two suites run on this version.
+#   compositor_cycles / compositor_eevee : the single scene each compositor A/B uses.
+# ---------------------------------------------------------------------------
+[blender]
+default_version = "4.5"
+script = "engine_benchmark.py"
+cycles_engines = ["CUDA", "OPTIX"]   # the "cycles" suite
+eevee_engines  = ["EEVEE"]           # the "eevee" suite
+
+[blender.versions."3.3"]
+exe = "blender/3.3/blender.exe"
+cycles_models = ["splash_3_3", "splash_3_1"]
+eevee_models  = ["eevee_temple", "eevee_elephant"]
+compositor_cycles = "splash_3_3"
+compositor_eevee  = "eevee_temple"
+
+[blender.versions."3.6"]
+exe = "blender/3.6/blender.exe"
+cycles_models = ["splash_3_6", "splash_3_4"]
+eevee_models  = ["eevee_temple", "eevee_elephant"]
+compositor_cycles = "splash_3_6"
+compositor_eevee  = "eevee_temple"
+
+[blender.versions."4.2"]
+exe = "blender/4.2/blender.exe"
+cycles_models = ["splash_4_2", "splash_4_1"]
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
+compositor_cycles = "splash_4_2"
+compositor_eevee  = "eevee_temple"
+
+[blender.versions."4.5"]
+exe = "blender/4.5/blender.exe"
+cycles_models = ["splash_4_5"]
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
+compositor_cycles = "splash_4_5"
+compositor_eevee  = "eevee_temple"
+
+[blender.versions."5.2"]
+exe = "blender/5.2/blender.exe"
+cycles_models = ["splash_5_2"]
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
+compositor_cycles = "splash_5_2"
+compositor_eevee  = "eevee_temple"
+
+# ---------------------------------------------------------------------------
+# RUN TUNING
+# ---------------------------------------------------------------------------
+[run]
+mode = "test"                  # "test" (fast, --test flag) or "full" (real benchmark)
+suite = "cycles"               # default suite when --suite is not given: cycles | eevee | all
+timeout_test_sec = 1800
+timeout_full_sec = 14400
+log_dir = "logs"
+output_xlsx = "results/results.xlsx"
+# warm = 3
+save_renders = false
+render_dir = "results/renders"
