@@ -41,19 +41,18 @@ script = "engine_benchmark.py"
 cycles_engines = ["CUDA", "OPTIX"]   # the "cycles" suite
 eevee_engines  = ["EEVEE"]           # the "eevee" suite
 
+# Note: the compositor CPU-vs-GPU A/B needs scene.render.compositor_device,
+# which exists only on Blender 4.0+. Pre-4.0 versions (3.3, 3.6) therefore define
+# no compositor_* picks -- the compositor suite skips them.
 [blender.versions."3.3"]
 exe = "blender/3.3/blender.exe"
 cycles_models = ["splash_3_3", "splash_3_1"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
-compositor_cycles = "splash_3_3"
-compositor_eevee  = "eevee_temple"
 
 [blender.versions."3.6"]
 exe = "blender/3.6/blender.exe"
 cycles_models = ["splash_3_6", "splash_3_4"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
-compositor_cycles = "splash_3_6"
-compositor_eevee  = "eevee_temple"
 
 [blender.versions."4.2"]
 exe = "blender/4.2/blender.exe"
