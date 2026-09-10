@@ -300,12 +300,25 @@ def apply_scene_controls(scene):
         print(f"    [warn] could not set compositor_device={COMPOSITOR_DEVICE}: {e}")
 
 
+def _compositor_node_tree(scene):
+    """The compositor node tree, across API versions:
+      * Blender 5.0+ : scene.compositing_node_group (use_nodes/node_tree removed)
+      * Blender <=4.x: scene.node_tree when scene.use_nodes is on
+    Returns the node tree or None. Checks the 5.0+ attribute FIRST so we never
+    touch the deprecated use_nodes/node_tree on newer builds."""
+    if hasattr(scene, "compositing_node_group"):
+        return scene.compositing_node_group
+    if getattr(scene, "use_nodes", False):
+        return getattr(scene, "node_tree", None)
+    return None
+
+
 def has_compositor(scene):
     """True only if the scene has a compositor that will actually RUN and do
     something beyond the default Render Layers -> Composite passthrough."""
-    if not getattr(scene, "use_nodes", False) or not getattr(scene.render, "use_compositing", False):
+    if not getattr(scene.render, "use_compositing", True):
         return False
-    nt = scene.node_tree
+    nt = _compositor_node_tree(scene)
     if nt is None:
         return False
     meaningful = [n for n in nt.nodes
