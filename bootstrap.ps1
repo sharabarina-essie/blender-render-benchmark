@@ -27,7 +27,6 @@ $BLENDER = @(
 #   Splash scenes (Cycles / version-matched) and EEVEE demo scenes (EEVEE-only).
 $MODELS = @(
   # --- splash (Cycles) ---  (download.blender.org file server, NOT www.blender.org)
-  @{ name="blender-3.1-splash"; kind="zip";   url="https://download.blender.org/demo/splash/blender-3.1-splash.zip" }
   @{ name="blender-3.3-splash"; kind="blend"; url="https://download.blender.org/demo/splash/blender-3.3-splash.blend" }
   @{ name="blender-3.4-splash"; kind="zip";   url="https://download.blender.org/demo/splash/blender-3.4-splash.zip" }
   @{ name="blender-3.6-splash"; kind="zip";   url="https://download.blender.org/demo/splash/blender-3.6-splash.zip" }
@@ -37,7 +36,6 @@ $MODELS = @(
   @{ name="blender-5.2-splash"; kind="blend"; url="https://download.blender.org/demo/splash/blender-5.2-splash.blend" }
   # --- EEVEE demo scenes ---
   @{ name="eevee/hatching";     kind="blend"; url="https://download.blender.org/demo-files/archives/art-gallery/eevee-samples/hatching-shader/eevee-hatching-by-ocean-quigley-90115ae49eb147059d9740a86c3d0966.blend" }
-  @{ name="eevee/UDIM_monster"; kind="zip";   url="https://download.blender.org/demo/UDIM_monster.zip" }
   @{ name="eevee/temple";       kind="blend"; url="https://download.blender.org/demo/eevee/temple/temple.blend" }
   @{ name="eevee/mr_elephant";  kind="blend"; url="https://download.blender.org/demo/eevee/mr_elephant/mr_elephant.blend" }
 )

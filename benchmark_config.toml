@@ -16,7 +16,6 @@
 [models]
 root = "models"
 # --- Cycles / splash scenes (version-matched) ---
-splash_3_1 = "blender-3.1-splash/blender3.1-splash.blend"
 splash_3_3 = "blender-3.3-splash.blend"
 splash_3_4 = "blender-3.4-splash/Blender-3.4.blend"
 splash_3_6 = "blender-3.6-splash/blender-3.6-splash/blender-3.6-splash.blend"
@@ -26,7 +25,6 @@ splash_4_5 = "blender-4.5-splash.blend"
 splash_5_2 = "blender-5.2-splash.blend"
 # --- EEVEE demo scenes (EEVEE-only) ---
 eevee_hatching = "eevee/hatching.blend"
-eevee_udim     = "eevee/UDIM_monster/UDIM_monster/udim-monster.blend"
 eevee_temple   = "eevee/temple.blend"
 eevee_elephant = "eevee/mr_elephant.blend"
 
@@ -46,7 +44,7 @@ eevee_engines  = ["EEVEE"]           # the "eevee" suite
 # no compositor_* picks -- the compositor suite skips them.
 [blender.versions."3.3"]
 exe = "blender/3.3/blender.exe"
-cycles_models = ["splash_3_3", "splash_3_1"]
+cycles_models = ["splash_3_3"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
 
 [blender.versions."3.6"]
@@ -57,23 +55,23 @@ eevee_models  = ["eevee_temple", "eevee_elephant"]
 [blender.versions."4.2"]
 exe = "blender/4.2/blender.exe"
 cycles_models = ["splash_4_2", "splash_4_1"]
-eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 compositor_cycles = "splash_4_2"
-compositor_eevee  = "eevee_temple"
+compositor_eevee  = "splash_4_2"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."4.5"]
 exe = "blender/4.5/blender.exe"
 cycles_models = ["splash_4_5"]
-eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 compositor_cycles = "splash_4_5"
-compositor_eevee  = "eevee_temple"
+compositor_eevee  = "splash_4_5"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."5.2"]
 exe = "blender/5.2/blender.exe"
 cycles_models = ["splash_5_2"]
-eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching", "eevee_udim"]
-compositor_cycles = "splash_5_2"
-compositor_eevee  = "eevee_temple"
+eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
+compositor_cycles = "splash_4_5"   # 5.2 splash has no compositor tree; use the 4.5 splash (opens in 5.2)
+compositor_eevee  = "splash_4_5"   # same scene under EEVEE
 
 # ---------------------------------------------------------------------------
 # RUN TUNING
