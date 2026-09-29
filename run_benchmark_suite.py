@@ -74,7 +74,7 @@ except ImportError:
 # Output parsing is decoupled into its own module (see benchmark_parse.py):
 # this runner only orchestrates + writes xlsx; it does not know the table format.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from benchmark_parse import parse_output
+from benchmark_parse import parse_output, parse_interactive_output
 
 # ---------------------------------------------------------------------------
 # Config loading -- benchmark_config.toml is the single source of truth for
@@ -128,7 +128,7 @@ def load_config(config_path):
                 continue
             if not isinstance(v.get("exe"), str) or not v["exe"]:
                 errors.append(f'[blender.versions."{k}"] exe must be a non-empty string')
-            for lk in ("models", "cycles_models", "eevee_models"):
+            for lk in ("models", "cycles_models", "eevee_models", "interactive_models"):
                 if lk in v and (not isinstance(v[lk], list)
                                 or any(not isinstance(m, str) for m in v[lk])):
                     errors.append(f'[blender.versions."{k}"] {lk} must be a list of model keys')
@@ -161,7 +161,7 @@ def load_config(config_path):
             if not isinstance(v, dict):
                 continue
             refs = (list(v.get("models", [])) + list(v.get("cycles_models", []))
-                    + list(v.get("eevee_models", [])))
+                    + list(v.get("eevee_models", [])) + list(v.get("interactive_models", [])))
             for sk in ("compositor_cycles", "compositor_eevee"):
                 if isinstance(v.get(sk), str):
                     refs.append(v[sk])
@@ -319,6 +319,29 @@ def build_cmd(blender_exe, benchmark_script, model_path, engine, mode, warm,
     return cmd
 
 
+def _exec(cmd, log_path, log_dir, timeout_sec):
+    """Run one Blender subprocess, capture combined stdout+stderr to log_path, and
+    classify the exit. Returns (text, run_status, elapsed_sec). Shared by the render
+    and interactive runners so process handling/crash decoding stays identical."""
+    os.makedirs(log_dir, exist_ok=True)
+    start = time.time()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout_sec)
+        text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        run_status = "OK" if proc.returncode == 0 else f"EXIT_{proc.returncode}"
+    except subprocess.TimeoutExpired as e:
+        text = (e.stdout or "") + "\n" + (e.stderr or "")
+        run_status = "TIMEOUT"
+    except FileNotFoundError as e:
+        text = str(e)
+        run_status = "LAUNCH_FAILED"
+    elapsed = time.time() - start
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return text, run_status, elapsed
+
+
 def run_one(blender_exe, benchmark_script, model_key, model_path, engine, mode,
             warm, save_renders, render_dir, extra_args, log_dir, timeout_sec, dry_run,
             tag="", version=None):
@@ -334,23 +357,7 @@ def run_one(blender_exe, benchmark_script, model_key, model_path, engine, mode,
                 "version": version, "mode": mode, "log_path": log_path,
                 "run_status": "DRY_RUN", "meta": {}, "rows": []}
 
-    os.makedirs(log_dir, exist_ok=True)
-    start = time.time()
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=timeout_sec)
-        text = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        run_status = "OK" if proc.returncode == 0 else f"EXIT_{proc.returncode}"
-    except subprocess.TimeoutExpired as e:
-        text = (e.stdout or "") + "\n" + (e.stderr or "")
-        run_status = "TIMEOUT"
-    except FileNotFoundError as e:
-        text = str(e)
-        run_status = "LAUNCH_FAILED"
-    elapsed = time.time() - start
-
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write(text)
+    text, run_status, elapsed = _exec(cmd, log_path, log_dir, timeout_sec)
 
     meta, rows = parse_output(text)
     if run_status != "OK":
@@ -378,6 +385,58 @@ def run_one(blender_exe, benchmark_script, model_key, model_path, engine, mode,
             "run_status": run_status, "meta": meta, "rows": rows}
 
 
+def build_interactive_cmd(blender_exe, script, model_path, mode, warm, extra_args):
+    """Interactive harness invocation: no --engine (depsgraph-eval cost is engine-
+    independent, so it runs once per model). --enable-autoexec for the same driver
+    reason as the render harness."""
+    cmd = [blender_exe, "--enable-autoexec", "-b", model_path, "-P", script, "--"]
+    if mode == "test":
+        cmd.append("--test")
+    if warm is not None:
+        cmd += ["--warm", str(warm)]
+    cmd += extra_args
+    return cmd
+
+
+def run_one_interactive(blender_exe, script, model_key, model_path, mode, warm,
+                        extra_args, log_dir, timeout_sec, dry_run, tag="", version=None):
+    """Run interactive_benchmark.py on one model; parse its metric table. Mirrors
+    run_one but with no engine dimension and the interactive parser/row shape."""
+    cmd = build_interactive_cmd(blender_exe, script, model_path, mode, warm, extra_args)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"{tag}{model_key}_interactive_{mode}_{ts}.log")
+
+    print(f"[run] {tag}{model_key} / interactive ({mode})  -> {os.path.basename(log_path)}")
+    if dry_run:
+        print("       " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
+        return {"model_key": model_key, "model_path": model_path, "version": version,
+                "mode": mode, "log_path": log_path, "run_status": "DRY_RUN",
+                "meta": {}, "rows": []}
+
+    text, run_status, elapsed = _exec(cmd, log_path, log_dir, timeout_sec)
+    meta, rows = parse_interactive_output(text)
+    if run_status != "OK":
+        # Non-clean exit -> one DEFINITIVE failure row (a crashed process may have
+        # half-printed the table; that partial scrape is not trustworthy).
+        label = failure_status_label(run_status)
+        rows = [{"metric": "(all)", "status": label, "median_ms": None, "min_ms": None,
+                 "max_ms": None, "derived": None,
+                 "reason": f"{decode_process_status(run_status)} after {elapsed:.0f}s -- see log"}]
+
+    n_ok = sum(1 for r in rows if r["status"] == "OK")
+    if run_status != "OK":
+        verdict, detail = failure_status_label(run_status), decode_process_status(run_status)
+    elif n_ok:
+        verdict, detail = "OK", f"{n_ok}/{len(rows)} metric-row(s) OK"
+    else:
+        verdict, detail = ("SKIPPED" if rows else "NO DATA"), f"0/{len(rows)} OK"
+    flag = "" if verdict == "OK" else "   <<< SEE LOG"
+    print(f"       {verdict:8} {elapsed:6.1f}s  {detail}{flag}")
+    return {"model_key": model_key, "model_path": model_path, "version": version,
+            "mode": mode, "log_path": log_path, "run_status": run_status,
+            "meta": meta, "rows": rows}
+
+
 # ---------------------------------------------------------------------------
 # Spreadsheet output
 # ---------------------------------------------------------------------------
@@ -394,18 +453,48 @@ COLUMNS = [
 #                  from output, so it's blank on a crashed/never-started run.
 
 
-def write_xlsx(out_path, run_started, records):
+# Interactive suite writes its own sheet (different row shape from the render race).
+INTERACTIVE_COLUMNS = [
+    "Run Started", "Version", "Model", "Mode", "Metric", "Status",
+    "Median (ms)", "Min (ms)", "Max (ms)", "Derived", "Frames",
+    "Reported GPU", "Blender Build", "Invariants Source", "Reason",
+    "Process Status", "Log File",
+]
+
+
+def _init_header(ws, columns):
+    # openpyxl's create_sheet() leaves a phantom empty row 1 (max_row==1, A1 None),
+    # so a plain append() would push the header to row 2 and leave row 1 blank.
+    # Write the header straight into row 1 instead; data appends then start at row 2.
+    if ws.max_row == 1 and all(c.value is None for c in ws[1]):
+        for col, val in enumerate(columns, start=1):
+            ws.cell(row=1, column=col, value=val)
+    else:
+        ws.append(columns)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.freeze_panes = "A2"
+
+
+def _open_sheet(out_path, title, columns):
+    """Open (or create) the named worksheet in out_path, preserving any other
+    sheets already in the file. Lets the render and interactive suites write into
+    the SAME workbook on separate tabs within one invocation."""
     if os.path.exists(out_path):
         wb = load_workbook(out_path)
-        ws = wb.active
+        ws = wb[title] if title in wb.sheetnames else wb.create_sheet(title)
+        if ws.max_row == 0 or ws["A1"].value is None:
+            _init_header(ws, columns)
     else:
         wb = Workbook()
         ws = wb.active
-        ws.title = "Results"
-        ws.append(COLUMNS)
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-        ws.freeze_panes = "A2"
+        ws.title = title
+        _init_header(ws, columns)
+    return wb, ws
+
+
+def write_xlsx(out_path, run_started, records):
+    wb, ws = _open_sheet(out_path, "Results", COLUMNS)
 
     for rec in records:
         meta = rec["meta"]
@@ -431,6 +520,28 @@ def write_xlsx(out_path, run_started, records):
     wb.save(out_path)
 
 
+def write_interactive_xlsx(out_path, run_started, records):
+    """Append interactive-suite results to the 'Interactive' sheet (one row per
+    metric per model), preserving the render 'Results' sheet in the same file."""
+    wb, ws = _open_sheet(out_path, "Interactive", INTERACTIVE_COLUMNS)
+    for rec in records:
+        meta = rec["meta"]
+        for row in rec["rows"]:
+            ws.append([
+                run_started, rec.get("version"), rec["model_key"], rec["mode"],
+                row["metric"], row["status"], row.get("median_ms"), row.get("min_ms"),
+                row.get("max_ms"), row.get("derived"), meta.get("frames"),
+                meta.get("gpu"), meta.get("version"), meta.get("invariants_source"),
+                row.get("reason"), rec["run_status"],
+                os.path.relpath(rec["log_path"], SCRIPT_DIR),
+            ])
+    for i, _ in enumerate(INTERACTIVE_COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = 18
+    ws.column_dimensions["O"].width = 30   # Reason
+    ws.column_dimensions["Q"].width = 40   # Log File
+    wb.save(out_path)
+
+
 # ---------------------------------------------------------------------------
 # CLI -- every flag here overrides the matching benchmark_config.toml value;
 # leaving a flag unset means "use whatever the config says."
@@ -442,9 +553,12 @@ def parse_args():
     p.add_argument("--mode", choices=["test", "full"], default=None,
                    help="test = --test (fast, non-representative); full = real benchmark run "
                         "(default: [run].mode in config)")
-    p.add_argument("--suite", choices=["cycles", "eevee", "all"], default=None,
+    p.add_argument("--suite", choices=["cycles", "eevee", "interactive", "all"], default=None,
                    help="cycles = CUDA+OptiX on each version's cycles_models; "
-                        "eevee = EEVEE on eevee_models; all = both. Default: [run].suite.")
+                        "eevee = EEVEE on eevee_models; interactive = Tier-1 headless "
+                        "interactivity (frame scrub / transform / subsurf) on "
+                        "interactive_models (writes its own 'Interactive' sheet); "
+                        "all = cycles+eevee (render race). Default: [run].suite.")
     p.add_argument("--models", default=None,
                    help="comma-separated model keys from config, or full .blend paths, or 'all'. "
                         "Default: the models listed for the selected --blender-version.")
@@ -494,12 +608,13 @@ def resolve_models(spec, config_models):
 
 
 def suites_requested(args, run_cfg):
-    """Which test suite(s) to run: 'cycles', 'eevee', or both ('all')."""
+    """Which test suite(s) to run. 'all' = the render race (cycles+eevee); the
+    Tier-1 'interactive' suite is opt-in (different measurement + its own sheet)."""
     s = (args.suite or run_cfg.get("suite") or "cycles").lower()
     if s == "all":
         return ["cycles", "eevee"]
-    if s not in ("cycles", "eevee"):
-        sys.exit(f"--suite must be cycles|eevee|all (got '{s}')")
+    if s not in ("cycles", "eevee", "interactive"):
+        sys.exit(f"--suite must be cycles|eevee|interactive|all (got '{s}')")
     return [s]
 
 
@@ -513,10 +628,23 @@ def engines_for_suite(suite, blender_cfg, args):
 
 
 def models_for_suite(version_cfg, suite):
-    """Catalog keys a version runs for a suite (cycles_models / eevee_models).
-    None => raw/legacy exe with no per-suite lists (caller falls back to catalog)."""
+    """Catalog keys a version runs for a suite (cycles_models / eevee_models /
+    interactive_models). None => raw/legacy exe with no per-suite lists (caller
+    falls back to catalog).
+
+    The interactive suite measures depsgraph RE-EVAL, which is engine-independent
+    -- so with no explicit interactive_models it runs on the UNION of this version's
+    cycles_models + eevee_models (both scene sets, deduped), not just the eevee ones.
+    Single-frame scenes simply skip the frame-scrub metric; transform/subsurf still run."""
     if not isinstance(version_cfg, dict):
         return None
+    if suite == "interactive" and "interactive_models" not in version_cfg:
+        merged = []
+        for k in (list(version_cfg.get("cycles_models", []))
+                  + list(version_cfg.get("eevee_models", []))):
+            if k not in merged:
+                merged.append(k)
+        return merged or version_cfg.get("models", [])
     return version_cfg.get(f"{suite}_models", version_cfg.get("models", []))
 
 
@@ -533,6 +661,13 @@ def main():
     requested_suites = suites_requested(args, run_cfg)
     warm = args.warm if args.warm is not None else run_cfg.get("warm")
     benchmark_script = args.script or blender_cfg["script"]
+    # Interactive harness: [blender].interactive_script if set, else sits next to
+    # the render script (both ship in the repo root together).
+    if blender_cfg.get("interactive_script"):
+        interactive_script = _resolve(cfg["_base_dir"], blender_cfg["interactive_script"])
+    else:
+        interactive_script = os.path.join(os.path.dirname(benchmark_script),
+                                          "interactive_benchmark.py")
     log_dir = args.log_dir or run_cfg["log_dir"]
     save_renders = args.save_renders if args.save_renders is not None else run_cfg["save_renders"]
     render_dir = args.render_dir or run_cfg["render_dir"]
@@ -560,6 +695,9 @@ def main():
 
     if not os.path.isfile(benchmark_script):
         sys.exit(f"engine_benchmark.py not found: {benchmark_script}")
+    if "interactive" in requested_suites and not args.dry_run \
+            and not os.path.isfile(interactive_script):
+        sys.exit(f"interactive_benchmark.py not found: {interactive_script}")
 
     now = datetime.datetime.now()
     run_started = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -583,7 +721,6 @@ def main():
             continue
         version_cfg = all_versions.get(vkey) if vkey else None
         for suite in requested_suites:
-            engines = engines_for_suite(suite, blender_cfg, args)
             # per-suite models: explicit --models wins; else the version's
             # {suite}_models list; else (raw/legacy exe) the whole catalog.
             if args.models:
@@ -600,6 +737,23 @@ def main():
                 print(f"    {blabel} / {suite}: no models to run")
                 continue
             tag = f"{vkey}_{suite}_" if vkey else f"{suite}_"
+
+            # --- Tier-1 interactive suite: no engine dimension, own sheet ---
+            if suite == "interactive":
+                print(f"\n--- {blabel} / interactive   models={list(models)} ---")
+                for model_key, model_path in models.items():
+                    rec = run_one_interactive(blender_exe, interactive_script, model_key,
+                                              model_path, mode, warm, args.extra_arg,
+                                              log_dir, timeout_sec, args.dry_run,
+                                              tag=tag, version=vkey)
+                    if not args.dry_run:
+                        write_interactive_xlsx(out_xlsx, run_started, [rec])
+                        total_rows += len(rec["rows"])
+                        print(f"       -> saved to {out_xlsx} ({total_rows} row(s) so far)")
+                continue
+
+            # --- render race (cycles / eevee) ---
+            engines = engines_for_suite(suite, blender_cfg, args)
             print(f"\n--- {blabel} / {suite}   engines={engines}   models={list(models)} ---")
             for model_key, model_path in models.items():
                 for engine in engines:

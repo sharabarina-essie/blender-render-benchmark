@@ -36,8 +36,15 @@ eevee_elephant = "eevee/mr_elephant.blend"
 [blender]
 default_version = "4.5"
 script = "engine_benchmark.py"
+interactive_script = "interactive_benchmark.py"   # the "interactive" suite (Tier-1)
 cycles_engines = ["CUDA", "OPTIX"]   # the "cycles" suite
 eevee_engines  = ["EEVEE"]           # the "eevee" suite
+# The interactive suite (--suite interactive) measures headless depsgraph re-eval
+# (frame scrub -> playback fps, transform latency, subsurf sweep). It has NO engine
+# dimension (eval cost is engine-independent) and runs on each version's
+# `interactive_models`; when that is unset it uses the UNION of cycles_models +
+# eevee_models (both scene sets), so the heavy Cycles splashes are covered too.
+# Single-frame scenes skip the frame-scrub metric; transform/subsurf still run.
 
 # Note: the compositor CPU-vs-GPU A/B needs scene.render.compositor_device,
 # which exists only on Blender 4.0+. Pre-4.0 versions (3.3, 3.6) therefore define
