@@ -414,8 +414,12 @@ def configure_backend(backend_type):
 
     # 2) Enable ONLY physically-present devices (optionally narrowed by --gpu).
     #    Ghosts get use=False, so the renderer only ever touches real hardware and
-    #    the reported GPU list is honest. CPU is never force-enabled.
+    #    the reported GPU list is honest. The CPU entry defaults to use=True in fresh
+    #    prefs, which would make GPU Compute a hybrid CPU+GPU render: force it off.
     _get_devices(cprefs)
+    for dev in cprefs.devices:
+        if dev.type == 'CPU':
+            dev.use = False
     type_devs = [d for d in cprefs.devices if d.type == backend_type]
     type_present = len(type_devs)
     if type_present == 0:
