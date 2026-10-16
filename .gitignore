@@ -7,3 +7,8 @@ __pycache__/
 # Downloaded by bootstrap.cmd from official blender.org URLs — never committed.
 blender/
 models/
+
+# Local engineering handoff — contains remote-GPU (Boost) context; keep OUT of the
+# public repo. Cursor still reads it from the working tree.
+HANDOFF.md
+*.local.md

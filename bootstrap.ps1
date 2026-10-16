@@ -2,7 +2,7 @@
   bootstrap.ps1 -- fetch everything a clone needs and place it correctly.
 
   Downloads the Blender builds and test models from official blender.org URLs into
-  blender/<version>/ and models/. Nothing large lives in git -- the repo is code +
+  blender/<x.y.z>/ (one folder per exact build) and models/. Nothing large lives in git -- the repo is code +
   this script + the config. Idempotent: existing items are skipped (use -Force to
   re-download). Uses built-in curl.exe + tar.exe (Windows 10 1803+/11).
 
@@ -14,16 +14,22 @@ $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TMP  = Join-Path $env:TEMP "bbb_dl"
 New-Item -ItemType Directory -Force $ROOT\blender,$ROOT\models,$ROOT\models\eevee,$ROOT\results,$ROOT\logs,$TMP | Out-Null
 
-# ---- Blender builds: version -> official portable zip -----------------------
-$BLENDER = @(
-  @{ ver="3.3"; url="https://download.blender.org/release/Blender3.3/blender-3.3.9-windows-x64.zip" }
-  @{ ver="3.6"; url="https://download.blender.org/release/Blender3.6/blender-3.6.9-windows-x64.zip" }
-  @{ ver="4.2"; url="https://download.blender.org/release/Blender4.2/blender-4.2.9-windows-x64.zip" }
-  @{ ver="4.5"; url="https://download.blender.org/release/Blender4.5/blender-4.5.9-windows-x64.zip" }
-  @{ ver="5.2"; url="https://download.blender.org/release/Blender5.2/blender-5.2.1-windows-x64.zip" }
+# ---- Blender builds: exact x.y.z -> official portable zip --------------------
+# Keep in sync with `builds` in benchmark_config.toml. First patch (.0) and the
+# latest patch of each line, so regressions inside a line are visible.
+$BUILDS = @(
+  "3.3.0", "3.3.9",
+  "3.6.0", "3.6.9",
+  "4.2.0", "4.2.23",
+  "4.5.0", "4.5.9",
+  "5.2.0", "5.2.1", "5.2.2"
 )
+$BLENDER = $BUILDS | ForEach-Object {
+  $line = ($_ -split '\.')[0..1] -join '.'
+  @{ ver=$_; url="https://download.blender.org/release/Blender$line/blender-$_-windows-x64.zip" }
+}
 
-# ---- Models: name -> url, kind ('blend' = direct file, 'zip' = extract folder)
+# ---- Models: name -> url, kind ('blend' = direct file, 'zip' / 'tarbz2' = extract folder)
 #   Splash scenes (Cycles / version-matched) and EEVEE demo scenes (EEVEE-only).
 $MODELS = @(
   # --- splash (Cycles) ---  (download.blender.org file server, NOT www.blender.org)
@@ -38,6 +44,12 @@ $MODELS = @(
   @{ name="eevee/hatching";     kind="blend"; url="https://download.blender.org/demo-files/archives/art-gallery/eevee-samples/hatching-shader/eevee-hatching-by-ocean-quigley-90115ae49eb147059d9740a86c3d0966.blend" }
   @{ name="eevee/temple";       kind="blend"; url="https://download.blender.org/demo/eevee/temple/temple.blend" }
   @{ name="eevee/mr_elephant";  kind="blend"; url="https://download.blender.org/demo/eevee/mr_elephant/mr_elephant.blend" }
+  # --- archviz (Cycles-authored interiors/exteriors; Blender Benchmark 2.0 scenes + demo) ---
+  @{ name="archviz/classroom";  kind="tarbz2"; url="https://download.blender.org/release/BlenderBenchmark2.0/scenes/classroom.tar.bz2" }
+  @{ name="archviz/barbershop"; kind="tarbz2"; url="https://download.blender.org/release/BlenderBenchmark2.0/scenes/barbershop_interior.tar.bz2" }
+  @{ name="archviz/junkshop";   kind="tarbz2"; url="https://download.blender.org/release/BlenderBenchmark2.0/scenes/junkshop.tar.bz2" }
+  @{ name="archviz/pavillon";   kind="tarbz2"; url="https://download.blender.org/release/BlenderBenchmark2.0/scenes/pavillon_barcelona.tar.bz2" }
+  @{ name="archviz/lone_monk";  kind="blend";  url="https://download.blender.org/demo/cycles/lone-monk_cycles_and_exposure-node_demo.blend" }
 )
 
 function Get-File($url,$out,$kind="any"){
@@ -49,7 +61,9 @@ function Get-File($url,$out,$kind="any"){
   $fs=[IO.File]::OpenRead($out); $b=New-Object byte[] 4; [void]$fs.Read($b,0,4); $fs.Close()
   $isHtml = ($b[0] -eq 0x3C -or $b[0] -eq 0x0A -or $b[0] -eq 0xEF)   # '<' / leading NL / BOM
   $isZip  = ($b[0] -eq 0x50 -and $b[1] -eq 0x4B)                     # 'PK'
+  $isBz2  = ($b[0] -eq 0x42 -and $b[1] -eq 0x5A -and $b[2] -eq 0x68) # 'BZh'
   if($kind -eq "zip"   -and -not $isZip){ Remove-Item $out -Force -EA SilentlyContinue; throw "URL did not return a ZIP (looks like HTML) -- fix the URL" }
+  if($kind -eq "tarbz2" -and -not $isBz2){ Remove-Item $out -Force -EA SilentlyContinue; throw "URL did not return a .tar.bz2 (looks like HTML) -- fix the URL" }
   if($kind -eq "blend" -and $isHtml){     Remove-Item $out -Force -EA SilentlyContinue; throw "URL did not return a .blend (looks like HTML) -- fix the URL" }
 }
 
@@ -85,8 +99,9 @@ foreach($m in $MODELS){
     } else {
       $dst = Join-Path "$ROOT\models" $m.name
       if(!$Force -and (Test-Path $dst)){ Write-Host "  $($m.name)/  already present"; continue }
-      $zip = Join-Path $TMP ("m-"+($m.name -replace '[\\/]','_')+".zip")
-      Get-File $m.url $zip "zip"
+      $ext = if($m.kind -eq "tarbz2"){ ".tar.bz2" } else { ".zip" }
+      $zip = Join-Path $TMP ("m-"+($m.name -replace '[\\/]','_')+$ext)
+      Get-File $m.url $zip $m.kind
       New-Item -ItemType Directory -Force $dst | Out-Null
       & tar.exe -xf $zip -C $dst; if($LASTEXITCODE -ne 0){ throw "unzip failed" }
       Remove-Item $zip -Force -EA SilentlyContinue
