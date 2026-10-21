@@ -108,7 +108,7 @@ compositor_cycles = "splash_4_2"
 compositor_eevee  = "splash_4_2"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."4.5"]
-builds = ["4.5.0", "4.5.9"]
+builds = ["4.5.0", "4.5.9", "4.5.14"]
 cycles_models = ["splash_4_5"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]
