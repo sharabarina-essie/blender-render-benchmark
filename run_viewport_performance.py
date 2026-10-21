@@ -1,4 +1,4 @@
-"""Measure orbit draw FPS in Blender's actual UI; never changes Boost sessions.
+"""Measure orbit draw FPS in Blender's actual UI.
 
 Smoke defaults to Classroom (one 5s run); full defaults to Medieval Fisher Hut
 (three 30s runs). Both start with Solid and Material Preview at Pixel Size 1x.
@@ -153,7 +153,7 @@ Scene: <code>{esc(summary['scene'])}</code><br>Graphics: {esc(report.get('graphi
 requested viewport {esc(summary.get('requested_window_px'))} · {esc(summary.get('samples'))} samples.</p>
 {'<p><a href="quality.html">Motion and stationary image-quality captures</a></p>' if report.get('quality_cases') else ''}
 <p class="note">Measures unique Blender viewport draw callbacks after view changes. This is not a measurement of GPU completion,
-rendered-image freshness, input-to-photon latency, or Boost client presentation FPS. Smoke results validate the harness;
+rendered-image freshness, input-to-photon latency, or client presentation FPS. Smoke results validate the harness;
 compare performance only with the same scene, build, settings, dimensions, and machine conditions.</p>
 <p>{esc('; '.join(medians))}</p>
 {''.join(f'<p class="note">{esc(warning)}</p>' for warning in warnings)}

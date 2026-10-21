@@ -8,8 +8,7 @@ __pycache__/
 blender/
 models/
 
-# Local engineering handoff — contains remote-GPU (Boost) context; keep OUT of the
-# public repo. Cursor still reads it from the working tree.
+# Local engineering notes stay outside source control.
 HANDOFF.md
 *.local.md
 

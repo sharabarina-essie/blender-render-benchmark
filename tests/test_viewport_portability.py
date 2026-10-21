@@ -83,7 +83,7 @@ class ViewportPortabilityTests(unittest.TestCase):
                     'sha256':hashlib.sha256(scene.read_bytes()).hexdigest(),
                     'required_links':['assets/chairs/chairs.blend']})
 
-    def test_native_matrix_needs_no_boost_cli_and_forwards_quality(self):
+    def test_matrix_launches_only_runner_and_forwards_quality(self):
         with TemporaryDirectory() as temporary:
             root=Path(temporary)
             build=root/'blender'/'5.2.1'
@@ -108,10 +108,10 @@ class ViewportPortabilityTests(unittest.TestCase):
             with patch('sys.argv',args), patch.object(matrix,'ROOT',root), \
                  patch.object(matrix,'load_config',return_value=config), \
                  patch.object(matrix,'digest',return_value='fixture-sha'), \
-                 patch.object(matrix,'boost_snapshot') as boost, \
+                 patch.object(matrix.subprocess,'run') as external_commands, \
                  patch.object(matrix.subprocess,'Popen',side_effect=launch):
                 self.assertEqual(matrix.main(),0)
-                boost.assert_not_called()
+                external_commands.assert_not_called()
             self.assertIn('--quality-capture',commands[0])
             self.assertEqual(commands[0][commands[0].index('--model')+1],str(scene))
             saved=json.loads((output/'matrix.json').read_text())

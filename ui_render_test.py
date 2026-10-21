@@ -38,7 +38,7 @@ Options (after --):
   --samples N           override the profile's Cycles samples
   --test                smoke settings: 25% res (480x270), 16 Cycles / 8 EEVEE samples,
                         Workbench AA off -- not representative
-  --label "..."         free text recorded in the CSV (e.g. "native", "Boost remote")
+  --label "..."         free text recorded in the CSV (e.g. "native", "workstation")
   --session ID          groups rows from one suite run (default: this run's timestamp)
   --stamp               burn date / render time / perm into the pixels (always in the
                         PNG metadata; burned-in text defeats validate_ui_renders.py)

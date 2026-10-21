@@ -137,7 +137,7 @@ def load_config(config_path):
             elif not isinstance(v.get("exe"), str) or not v["exe"]:
                 errors.append(f'[blender.versions."{k}"] needs builds = [...] or exe = "..."')
             for lk in ("models", "cycles_models", "eevee_models", "interactive_models",
-                       "boost_models", "archviz_models"):
+                       "archviz_models"):
                 if lk in v and (not isinstance(v[lk], list)
                                 or any(not isinstance(m, str) for m in v[lk])):
                     errors.append(f'[blender.versions."{k}"] {lk} must be a list of model keys')
@@ -171,7 +171,7 @@ def load_config(config_path):
                 continue
             refs = (list(v.get("models", [])) + list(v.get("cycles_models", []))
                     + list(v.get("eevee_models", [])) + list(v.get("interactive_models", []))
-                    + list(v.get("boost_models", [])) + list(v.get("archviz_models", [])))
+                    + list(v.get("archviz_models", [])))
             for sk in ("compositor_cycles", "compositor_eevee"):
                 if isinstance(v.get(sk), str):
                     refs.append(v[sk])
@@ -309,7 +309,6 @@ def print_versions(blender_cfg):
             print(f"       builds: {', '.join(listed)}   (* = default)")
         print(f"       cycles: {', '.join(v.get('cycles_models', v.get('models', []))) or '-'}")
         print(f"       eevee : {', '.join(v.get('eevee_models', [])) or '-'}")
-        print(f"       boost : {', '.join(v.get('boost_models', [])) or '-'}")
         print(f"       archviz: {', '.join(v.get('archviz_models', [])) or '-'}")
 
 # ---------------------------------------------------------------------------
@@ -510,7 +509,7 @@ COLUMNS = [
     "Reported GPU", "Blender Build", "Resolution", "Cycles Samples",
     "Invariants Source", "Compositor", "Reason", "Process Status", "Log File",
 ]
-# "Label" = free-text run label from --label (e.g. the Boost build/host/GPU, or
+# "Label" = free-text run label from --label (e.g. the test build/host/GPU, or
 #           "native") -- the config/environment the Cycles log can't record itself.
 # "Version"      = the build we launched (e.g. 4.5.0; the line key for a line with no
 #                  builds) -- ALWAYS set, even on a crash, so every row is attributable.
@@ -626,26 +625,15 @@ def parse_args():
     p.add_argument("--mode", choices=["test", "full"], default=None,
                    help="test = --test (fast, non-representative); full = real benchmark run "
                         "(default: [run].mode in config)")
-    p.add_argument("--suite",
-                   choices=["cycles", "eevee", "archviz", "interactive", "boost", "boost-debug",
-                            "all"],
+    p.add_argument("--suite", choices=["cycles", "eevee", "archviz", "interactive", "all"],
                    default=None,
-                   help="cycles = CUDA+OptiX on each version's cycles_models; "
-                        "eevee = EEVEE on eevee_models; archviz = CUDA+OptiX+EEVEE on the "
-                        "archviz_models scenes; boost = Cycles Boost add-on through "
-                        "the Boost tunnel (BOOST_REMOTE_*) on boost_models; boost-debug = "
-                        "Cycles Boost on this machine over a local socket (BOOST_TCP_*) on "
-                        "boost_models; interactive = Tier-1 headless "
-                        "interactivity (frame scrub / transform / subsurf) on "
-                        "interactive_models (writes its own 'Interactive' sheet); "
-                        "all = cycles+eevee (render race). Default: [run].suite.")
+                   help="cycles = CUDA+OptiX; eevee = EEVEE; archviz = all three engines; "
+                        "interactive = headless depsgraph evaluation; all = cycles+eevee")
     p.add_argument("--models", default=None,
                    help="comma-separated model keys from config, or full .blend paths, or 'all'. "
                         "Default: the models listed for the selected --blender-version.")
     p.add_argument("--engines", default=None,
-                   help="comma-separated engines to run (default: the suite's "
-                        "[blender].<suite>_engines). Cycles Boost: BOOST_TCP_OPTIX, "
-                        "BOOST_TCP_CUDA, BOOST_REMOTE_OPTIX, BOOST_REMOTE_CUDA")
+                   help="comma-separated engines; default: [blender].<suite>_engines")
     p.add_argument("--warm", type=int, default=None, help="override warm-run count passed to engine_benchmark.py")
     p.add_argument("--timeout", type=int, default=None,
                    help="per (model, engine) subprocess timeout in seconds (default: mode-dependent, from config)")
@@ -667,7 +655,7 @@ def parse_args():
     p.add_argument("--log-dir", default=None, help="default: [run].log_dir in config")
     p.add_argument("--out", default=None, help="default: [run].output_xlsx in config")
     p.add_argument("--label", default=None,
-                   help="free-text label recorded in the Label column (e.g. the Boost "
+                   help="free-text label recorded in the Label column (e.g. the test "
                         "build/host/GPU, or 'native') -- the config the logs can't capture")
     p.add_argument("--save-renders", action="store_true", default=None,
                    help="write each cold frame to disk for visual comparison later "
@@ -702,8 +690,8 @@ def suites_requested(args, run_cfg):
     s = (args.suite or run_cfg.get("suite") or "cycles").lower()
     if s == "all":
         return ["cycles", "eevee"]
-    if s not in ("cycles", "eevee", "archviz", "interactive", "boost", "boost-debug"):
-        sys.exit(f"--suite must be cycles|eevee|archviz|interactive|boost|boost-debug|all "
+    if s not in ("cycles", "eevee", "archviz", "interactive"):
+        sys.exit(f"--suite must be cycles|eevee|archviz|interactive|all "
                  f"(got '{s}')")
     return [s]
 
@@ -712,8 +700,6 @@ SUITE_DEFAULT_ENGINES = {
     "cycles": ["CUDA", "OPTIX"],
     "eevee": ["EEVEE"],
     "archviz": ["CUDA", "OPTIX", "EEVEE"],
-    "boost": ["BOOST_REMOTE_CUDA", "BOOST_REMOTE_OPTIX"],
-    "boost-debug": ["BOOST_TCP_CUDA", "BOOST_TCP_OPTIX"],
 }
 
 
@@ -744,10 +730,6 @@ def models_for_suite(version_cfg, suite):
             if k not in merged:
                 merged.append(k)
         return merged or version_cfg.get("models", [])
-    if suite in ("boost", "boost-debug"):
-        # Opt-in per version: the add-on targets one Blender range, so a version
-        # without boost_models runs nothing rather than launching to SKIP.
-        return version_cfg.get("boost_models", [])
     return version_cfg.get(f"{suite}_models", version_cfg.get("models", []))
 
 
@@ -857,7 +839,7 @@ def main():
                         print(f"       -> saved to {out_xlsx} ({total_rows} row(s) so far)")
                 continue
 
-            # --- render race (cycles / eevee / boost / boost-debug) ---
+            # --- render race (cycles / eevee) ---
             engines = engines_for_suite(suite, blender_cfg, args)
             print(f"\n--- {blabel} / {suite}   engines={engines}   models={list(models)} ---")
             for model_key, model_path in models.items():

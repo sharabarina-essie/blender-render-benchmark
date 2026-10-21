@@ -45,16 +45,6 @@ HOW TO RUN
     blender --enable-autoexec -b scene.blend --python engine_benchmark.py -- --engine CUDA
     blender --enable-autoexec -b scene.blend --python engine_benchmark.py -- --engine EEVEE
 
-  Cycles Boost add-on (Blender 4.5, must be installed + enabled as an extension):
-    ... --engine BOOST_TCP_OPTIX      render_on=TCP: renderer on THIS machine behind a
-                                      local socket (the protocol control)
-    ... --engine BOOST_REMOTE_OPTIX   render_on=BOOST: renderer reached through the
-                                      Boost tunnel; needs Blender running under Boost
-    (also BOOST_TCP_CUDA / BOOST_REMOTE_CUDA; BOOST = all four in one process)
-    It reads the scene's own Cycles settings, so the same profile applies. Every
-    render opens a fresh session (no persistent data), so warm ~= cold minus
-    kernel compile. --gpu is ignored: the add-on picks its device by type only.
-
   All engines in one process (adds cooldown between them; less isolated):
     blender --enable-autoexec -b scene.blend --python engine_benchmark.py
 
@@ -209,10 +199,7 @@ TEST_EEVEE_SAMPLES = 16
 TEST_RES_PERCENTAGE = 25   # 25% of profile res (1920x1080 -> 480x270): fast, still 16:9
 TEST_WORKBENCH_AA = "OFF"  # Workbench anti-aliasing off in test mode
 
-# Cycles Boost add-on: its own RenderEngine, but it renders from scene.cycles, so
-# it gets the Cycles profile and the raw/denoised split like stock Cycles.
-BOOST_ENGINE_ID = "CYCLES_BOOST"
-CYCLES_FAMILY = ("CYCLES", BOOST_ENGINE_ID)
+CYCLES_FAMILY = ("CYCLES",)
 
 # ---------------------------------------------------------------------------
 # Setting application
@@ -448,63 +435,11 @@ def configure_backend(backend_type):
     return True, matched, "ok"
 
 
-def _boost_local_devices(backend_type):
-    """Names of backend_type devices the Cycles Boost core sees in THIS process.
-    Under a Boost session that is whatever GPU Boost is presenting."""
-    from cycles_boost_core import _cycles_boost
-    names = []
-    for d in _cycles_boost.devices():
-        if d["type"] == backend_type and d["description"] not in names:
-            names.append(d["description"])
-    return names
-
-
-def _boost_device_labels(settings):
-    """Device label(s) for a configured Cycles Boost scene. In BOOST mode the GPU
-    is on the far side of the tunnel and this process cannot name it."""
-    if settings.render_on == "BOOST":
-        return [f"remote via Boost plugin ({settings.device})"]
-    try:
-        names = _boost_local_devices(settings.device)
-    except Exception:
-        names = []
-    return [f"{n} ({settings.device}, Boost TCP)" for n in names] or \
-           [f"unknown GPU ({settings.device}, Boost TCP)"]
-
-
-def configure_boost(backend_type, render_on):
-    """Select the Cycles Boost engine, its device type and where it renders
-    (render_on = 'TCP' | 'BOOST'). Returns (ok, device_names, reason); ok=False => skip."""
-    scene = bpy.context.scene
-    if not hasattr(scene, "cycles_boost"):
-        return False, [], "Cycles Boost add-on not enabled"
-    try:
-        scene.render.engine = BOOST_ENGINE_ID
-    except TypeError:
-        return False, [], "Cycles Boost engine not registered"
-    try:
-        _boost_local_devices(backend_type)
-    except Exception as e:
-        return False, [], f"Cycles Boost core not loadable: {_one_line(e)}"
-
-    settings = scene.cycles_boost
-    settings.render_on = render_on
-    try:
-        settings.device = backend_type
-    except TypeError:
-        return False, [], f"no {backend_type} device visible to Cycles Boost"
-    if GPU_SUBSTR:
-        print(f"    [warn] --gpu '{GPU_SUBSTR}' ignored: Cycles Boost picks its device by type only")
-    return True, _boost_device_labels(settings), "ok"
-
-
 def _configure_setup(setup):
     """Point the scene at a setup's engine/device. Returns (ok, devices, detail)."""
     engine, backend = setup["engine"], setup["backend"]
     if engine == "CYCLES":
         return configure_backend(backend)
-    if engine == BOOST_ENGINE_ID:
-        return configure_boost(backend, setup["render_on"])
     eng_id = _resolve_engine_id(engine, bpy.context.scene)   # Eevee id varies by version
     bpy.context.scene.render.engine = eng_id                 # EEVEE (Next/legacy) or Workbench
     return True, [], f"engine={eng_id}"
@@ -637,7 +572,7 @@ def benchmark_engine(setup):
 
     apply_customer_profile(scene, engine)
 
-    # A render that errors (e.g. Cycles Boost with no renderer to reach) raises
+    # A render error raises from bpy.ops; keep the remaining table available.
     # from bpy.ops; record it as this engine's row instead of losing the table.
     try:
         return _measure_engine(scene, name, is_cycles, devices)
@@ -782,23 +717,6 @@ _ENGINE_ALIASES = {
     "WB":  [{"name": "Workbench", "engine": "BLENDER_WORKBENCH", "backend": None}],
 }
 
-# Cycles Boost: render_on TCP = local renderer behind a socket (control),
-# BOOST = renderer through the Boost tunnel.
-BOOST_SETUPS = {
-    "BOOST_TCP_OPTIX":    {"name": "Boost TCP (OptiX)",    "engine": BOOST_ENGINE_ID,
-                           "backend": "OPTIX", "render_on": "TCP"},
-    "BOOST_TCP_CUDA":     {"name": "Boost TCP (CUDA)",     "engine": BOOST_ENGINE_ID,
-                           "backend": "CUDA",  "render_on": "TCP"},
-    "BOOST_REMOTE_OPTIX": {"name": "Boost Remote (OptiX)", "engine": BOOST_ENGINE_ID,
-                           "backend": "OPTIX", "render_on": "BOOST"},
-    "BOOST_REMOTE_CUDA":  {"name": "Boost Remote (CUDA)",  "engine": BOOST_ENGINE_ID,
-                           "backend": "CUDA",  "render_on": "BOOST"},
-}
-for _token, _setup in BOOST_SETUPS.items():
-    _ENGINE_ALIASES[_token] = [_setup]
-_ENGINE_ALIASES["BOOST"] = list(BOOST_SETUPS.values())
-
-
 _USAGE = """\
 engine_benchmark.py -- OFFLINE per-engine render benchmark (runs INSIDE Blender).
 
@@ -811,10 +729,6 @@ engine_benchmark.py -- OFFLINE per-engine render benchmark (runs INSIDE Blender)
                                 Workbench is a solid-shading GL rasterizer -- a
                                 diagnostic GL-forwarding baseline, not a production
                                 render path.
-    --engine BOOST_TCP_OPTIX|BOOST_TCP_CUDA|BOOST_REMOTE_OPTIX|BOOST_REMOTE_CUDA|BOOST
-                                Cycles Boost add-on (Blender 4.5). TCP = renderer on
-                                this machine behind a socket; REMOTE = through the
-                                Boost tunnel (Blender must run under Boost).
     --test                      fast smoke check: warm=1, 64/16 samples, 25% res
                                 (480x270). Every table stamped NOT REPRESENTATIVE.
     --warm N                    warm iterations to median over (overrides --test's 1)
@@ -892,8 +806,6 @@ def _extract_gpu():
     # directly so an EEVEE run's header isn't mislabeled with a persisted Cycles
     # backend (e.g. '(OPTIX)') it never used.
     try:
-        if bpy.context.scene.render.engine == BOOST_ENGINE_ID:
-            return ", ".join(_boost_device_labels(bpy.context.scene.cycles_boost))
         if bpy.context.scene.render.engine != 'CYCLES':   # EEVEE / Workbench: GL device
             gl = _gl_renderer_string()
             if gl:

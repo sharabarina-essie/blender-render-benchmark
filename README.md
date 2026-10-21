@@ -152,8 +152,8 @@ Scenes and user preferences are not saved.
 
 ### Prepare the native test machine
 
-Use Windows, the NVIDIA driver and Python **3.10 or later**. Disconnect Boost on
-the target machine for a native baseline. The tests never start or stop sessions.
+Use Windows, the NVIDIA driver and Python **3.10 or later**. Run from a local
+graphical desktop session.
 
 ```powershell
 git fetch origin
@@ -196,7 +196,7 @@ The examples use the substring `RTX 600`, which matches RTX 600 Ada / RTX 6000 A
 names; select a unique substring if multiple cards are installed. Both Cycles
 selection and the OpenGL renderer must match. A mismatched integrated GPU fails
 validation; select NVIDIA for that executable in Windows Graphics settings before
-retrying. `--label` records a description, not proof that Boost is disconnected.
+retrying. `--label` records a free-text description of the test environment.
 
 ```powershell
 # Classroom smoke: all six shading permutations, one 5-second trial each.
@@ -218,7 +218,7 @@ Preview with Scene Lights/World, Rendered EEVEE, Rendered Cycles OptiX, Rendered
 Cycles CUDA. The matrix uses a fresh Blender process per build/permutation and
 continues after crashes, recording failures. Narrow it with `--builds
 4.5.14,5.2.1` or `--cases ...`; `--smoke` selects Classroom. Native runs need no
-Boost CLI. Optional `--capture-boost-state` takes read-only session snapshots.
+external session or service controls.
 
 ### Settings, metrics and evidence
 

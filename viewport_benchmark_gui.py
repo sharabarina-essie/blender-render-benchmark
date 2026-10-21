@@ -10,7 +10,7 @@ PHASES (pick which run via RUN_PHASES below):
                 1920x1080, layout-independent) -> DRAW per shading mode, a short
                 ORBIT, and PLAYBACK. Isolates render+interop (no window swap).
   "onscreen"  : redraw the REAL window with buffer swap -> DRAW + short ORBIT (the
-                full present path the user sees / Boost forwards). Size = the on-screen
+                full present path the user sees). Size = the on-screen
                 3D view.
   "orbit"     : the INTERACTIVE test -> continuously orbits the RENDERED viewport with
                 a live on-screen FPS overlay for SUSTAINED_S seconds and records

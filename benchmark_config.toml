@@ -8,10 +8,6 @@
 #   cycles : engines CUDA + OptiX on each version's `cycles_models` (its splash scene)
 #   eevee  : engine EEVEE on each version's `eevee_models` (EEVEE demo scenes)
 #   archviz: CUDA + OptiX + EEVEE on each version's `archviz_models` (heavy interiors/exteriors)
-#   boost       : the Cycles Boost add-on through the Boost tunnel, on `boost_models`
-#   boost-debug : the Cycles Boost add-on on this machine over a local socket, on
-#                 `boost_models` (both only on versions that list boost_models; the
-#                 add-on supports Blender 4.5.x)
 # Compositor A/B picks one Cycles + one EEVEE model per version (compositor_* below).
 
 # ---------------------------------------------------------------------------
@@ -66,12 +62,6 @@ eevee_engines  = ["EEVEE"]           # the "eevee" suite
 # The "archviz" suite: archviz_models under final-render Cycles and the EEVEE
 # preview/lookdev pass designers use on the same scene.
 archviz_engines = ["CUDA", "OPTIX", "EEVEE"]
-# The "boost" suite: renderer through the Boost tunnel (needs a Boost session --
-# without one the rows come back FAIL with the add-on's error).
-boost_engines       = ["BOOST_REMOTE_CUDA", "BOOST_REMOTE_OPTIX"]
-# The "boost-debug" suite: renderer on this machine behind a local socket (the
-# protocol control, no Boost needed).
-boost_debug_engines = ["BOOST_TCP_CUDA", "BOOST_TCP_OPTIX"]
 # The interactive suite (--suite interactive) measures headless depsgraph re-eval
 # (frame scrub -> playback fps, transform latency, subsurf sweep). It has NO engine
 # dimension (eval cost is engine-independent) and runs on each version's
@@ -113,7 +103,6 @@ cycles_models = ["splash_4_5"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]
 heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
-boost_models  = ["splash_4_5"]
 compositor_cycles = "splash_4_5"
 compositor_eevee  = "splash_4_5"   # splash (has a compositor) rendered under EEVEE
 
@@ -131,7 +120,7 @@ compositor_eevee  = "splash_4_5"   # same scene under EEVEE
 # ---------------------------------------------------------------------------
 [run]
 mode = "test"                  # "test" (fast, --test flag) or "full" (real benchmark)
-suite = "cycles"               # default suite when --suite is not given: cycles | eevee | boost | boost-debug | all
+suite = "cycles"               # default suite when --suite is not given: cycles | eevee | archviz | interactive | all
 timeout_test_sec = 1800
 timeout_full_sec = 14400
 log_dir = "logs"

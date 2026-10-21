@@ -104,21 +104,10 @@ Stutters: between-draw gaps &gt; max(100ms, 3 × each trial's median interval).
 PASS confirms complete measurements, size/backend and image sanity, not image equivalence or a minimum FPS.</p>
 <div style="overflow-x:auto"><table><tr><th>Blender</th>{''.join(f'<th>{esc(c)}</th>' for c in matrix['cases'])}</tr>
 {''.join(table_rows)}</table></div><ul>{errors}</ul>
-<p><a href="matrix.json">Matrix JSON</a> · <a href="trials.csv">All trial metrics CSV</a> ·
-{('<a href="boost_before.txt">Session before</a> · <a href="boost_after.txt">Session after</a>') if matrix.get('capture_boost_state') else ''}</p>'''
+<p><a href="matrix.json">Matrix JSON</a> · <a href="trials.csv">All trial metrics CSV</a></p>'''
     temporary = output / 'report.tmp'
     temporary.write_text(document, encoding='utf-8')
     temporary.replace(output / 'report.html')
-
-
-def boost_snapshot(output, name):
-    try:
-        result = subprocess.run(['boost', 'session', 'list'], capture_output=True,
-                                text=True, errors='replace', timeout=20)
-        text = result.stdout + result.stderr
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        text = str(exc)
-    (output / name).write_text(text, encoding='utf-8')
 
 
 def main():
@@ -136,7 +125,6 @@ def main():
     parser.add_argument('--smoke', action='store_true', help='Classroom, one 5s trial; full defaults to Medieval Hut, 3 x 30s')
     parser.add_argument('--model', help='Override the scene catalog key or .blend path')
     parser.add_argument('--quality-capture', action='store_true')
-    parser.add_argument('--capture-boost-state', action='store_true', help='Optional read-only session snapshots; unnecessary for native runs')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     args.runs = args.runs if args.runs is not None else (1 if args.smoke else 3)
@@ -163,7 +151,7 @@ def main():
         parser.error(f'Scene not found: {scene}. Run setup_viewport_test.py first.')
     matrix = {'status': 'RUNNING', 'started_at': datetime.now().isoformat(timespec='seconds'),
               'label': args.label, 'quality_capture': args.quality_capture,
-              'capture_boost_state': args.capture_boost_state, 'scene': str(scene), 'scene_sha256': digest(scene),
+              'scene': str(scene), 'scene_sha256': digest(scene),
               'builds': [path.name for path in builds], 'cases': cases,
               'runs': args.runs, 'duration_s': args.duration, 'warmup_s': args.warmup,
               'timeout_s': args.timeout, 'gpu_filter': args.gpu, 'quality_profile': dict(STANDARD_PROFILE),
@@ -174,8 +162,6 @@ def main():
               'cells': [{'build': build.name, 'case': case, 'status': 'PENDING',
                          'directory': f'{build.name}/{case}', 'results': []}
                         for build in builds for case in cases]}
-    if args.capture_boost_state:
-        boost_snapshot(output, 'boost_before.txt')
     save_matrix(output, matrix)
     print(f'Matrix: {len(builds)} builds × {len(cases)} cases × {args.runs} trials -> {output}', flush=True)
     for index, cell in enumerate(matrix['cells'], 1):
@@ -228,8 +214,6 @@ def main():
         for error in cell['errors']:
             print('  ' + error, flush=True)
         save_matrix(output, matrix)
-    if args.capture_boost_state:
-        boost_snapshot(output, 'boost_after.txt')
     matrix['scene_unchanged'] = digest(scene) == matrix['scene_sha256']
     matrix['harness_unchanged'] = all(digest(ROOT / name) == value for name, value in matrix['harness_sha256'].items())
     matrix['status'] = 'PASS' if all(cell['status'] == 'PASS' for cell in matrix['cells']) and matrix['scene_unchanged'] and matrix['harness_unchanged'] else 'FAIL'
