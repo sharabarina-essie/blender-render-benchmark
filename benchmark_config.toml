@@ -44,6 +44,8 @@ heavy_fisher_hut = "medieval_fisher_hut.blend"
 
 # ---------------------------------------------------------------------------
 # BLENDER VERSIONS  (one table per release line, e.g. "4.5")
+#   Pinned 2026-10-22: first, lower patch-number midpoint, latest Windows x64 build.
+#   Update bootstrap.ps1 and setup_viewport_test.py when changing these lists.
 #   builds        : exact patch builds of the line, each a portable build under
 #                   <builds_dir>/<x.y.z>/blender.exe (bootstrap.ps1 installs them).
 #                   --blender-version 4.5 runs the default_build (else the last);
@@ -73,23 +75,21 @@ archviz_engines = ["CUDA", "OPTIX", "EEVEE"]
 # which exists only on Blender 4.0+. Pre-4.0 versions (3.3, 3.6) therefore define
 # no compositor_* picks -- the compositor suite skips them.
 [blender.versions."3.3"]
-builds = ["3.3.0", "3.3.9"]
+builds = ["3.3.0", "3.3.10", "3.3.21"]
 cycles_models = ["splash_3_3"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
 heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 
 [blender.versions."3.6"]
-builds = ["3.6.0", "3.6.9"]
+builds = ["3.6.0", "3.6.11", "3.6.23"]
 cycles_models = ["splash_3_6", "splash_3_4"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
 heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 
 [blender.versions."4.2"]
-# 4.2.9 dropped: every UI render crashes (ui_handle_menus_recursive; known-bad patch,
-# see blender#139180). 4.2.23 is the final 4.2 LTS.
-builds = ["4.2.0", "4.2.23"]
+builds = ["4.2.0", "4.2.11", "4.2.23"]
 cycles_models = ["splash_4_2", "splash_4_1"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
@@ -98,7 +98,7 @@ compositor_cycles = "splash_4_2"
 compositor_eevee  = "splash_4_2"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."4.5"]
-builds = ["4.5.0", "4.5.9", "4.5.14"]
+builds = ["4.5.0", "4.5.7", "4.5.15"]
 cycles_models = ["splash_4_5"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]
@@ -107,7 +107,7 @@ compositor_cycles = "splash_4_5"
 compositor_eevee  = "splash_4_5"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."5.2"]
-builds = ["5.2.0", "5.2.1", "5.2.2"]
+builds = ["5.2.0", "5.2.1", "5.2.3"]
 cycles_models = ["splash_5_2"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
 archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]

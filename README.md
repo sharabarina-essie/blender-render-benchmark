@@ -34,6 +34,33 @@ python run_benchmark_suite.py --all-versions --suite cycles --dry-run
 `bootstrap` prints the `.blend` files it extracted and validates each download
 (a URL that returns an HTML page instead of a file fails loudly).
 
+### Pinned Blender patch coverage
+
+Both `bootstrap.cmd` and `python setup_viewport_test.py --builds all --scene smoke`
+(on `interactive-viewport-tests`) select these **15 portable Windows x64 builds**.
+The benchmark config uses the same selection. Verified against Blender's official
+release directories on **October 22, 2026**:
+
+| Release family | First | Middle | Latest available |
+|---|---|---|---|
+| [3.3](https://download.blender.org/release/Blender3.3/) | `3.3.0` | `3.3.10` | `3.3.21` |
+| [3.6](https://download.blender.org/release/Blender3.6/) | `3.6.0` | `3.6.11` | `3.6.23` |
+| [4.2](https://download.blender.org/release/Blender4.2/) | `4.2.0` | `4.2.11` | `4.2.23` |
+| [4.5](https://download.blender.org/release/Blender4.5/) | `4.5.0` | `4.5.7` | `4.5.15` |
+| [5.2](https://download.blender.org/release/Blender5.2/) | `5.2.0` | `5.2.1` | `5.2.3` |
+
+"Middle" means the lower midpoint of the patch-number range: `floor(latest patch / 2)`.
+For example, 3.3 spans patches 0 through 21, so its middle selection is 3.3.10.
+Blender 3.3.21 is the final 3.3 release; there is no official 3.3.24 Windows build.
+For the still-supported 4.5 and 5.2 families, "latest" is pinned to the verification
+date, so rerunning bootstrap does not silently change the test matrix.
+
+Rerun bootstrap after pulling this update. Existing builds are reused; missing
+selected builds are downloaded into `blender/<version>/`. Other installed patches
+are kept. The viewport matrix runs every installed build by default; use its
+`--builds` option to limit a run to selected exact patches. Models remain under
+`models/` and out of Git.
+
 > The machine needs a **GPU + drivers**; `blender/` and `models/` are git-ignored
 > (downloaded, never committed) — only code + config + bootstrap are committed.
 
@@ -165,9 +192,9 @@ python -m unittest discover -s tests -v
 
 If already on this branch, use `git pull --ff-only`. Setup downloads selected
 portable Blender builds and Classroom with its linked assets. Existing builds
-are reused. Use `--builds all` to install all 13 builds used by the viewport
-matrix. Existing installations can be selected with `--blender PATH` for a single
-run or `--blender-dir DIRECTORY` for the matrix.
+are reused. Use `--builds all` to install the 15 pinned builds listed above.
+Existing installations can be selected with `--blender PATH` for a single run
+or `--blender-dir DIRECTORY` for the matrix.
 
 **All models stay out of Git.** Download Medieval Hut, Temple and other manually
 supplied scenes yourself, then place them under `models/`:

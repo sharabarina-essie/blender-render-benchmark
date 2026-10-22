@@ -15,14 +15,15 @@ $TMP  = Join-Path $env:TEMP "bbb_dl"
 New-Item -ItemType Directory -Force $ROOT\blender,$ROOT\models,$ROOT\models\eevee,$ROOT\results,$ROOT\logs,$TMP | Out-Null
 
 # ---- Blender builds: exact x.y.z -> official portable zip --------------------
-# Keep in sync with `builds` in benchmark_config.toml. First patch (.0) and the
-# latest patch of each line, so regressions inside a line are visible.
+# Keep in sync with `builds` in benchmark_config.toml and the viewport setup.
+# Pinned 2026-10-22 from official Windows x64 ZIP listings: first (.0),
+# lower patch-number midpoint (floor(latest patch / 2)), and latest available.
 $BUILDS = @(
-  "3.3.0", "3.3.9",
-  "3.6.0", "3.6.9",
-  "4.2.0", "4.2.23",
-  "4.5.0", "4.5.9",
-  "5.2.0", "5.2.1", "5.2.2"
+  "3.3.0", "3.3.10", "3.3.21",
+  "3.6.0", "3.6.11", "3.6.23",
+  "4.2.0", "4.2.11", "4.2.23",
+  "4.5.0", "4.5.7", "4.5.15",
+  "5.2.0", "5.2.1", "5.2.3"
 )
 $BLENDER = $BUILDS | ForEach-Object {
   $line = ($_ -split '\.')[0..1] -join '.'

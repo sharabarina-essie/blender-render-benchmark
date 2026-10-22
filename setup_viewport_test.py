@@ -17,8 +17,14 @@ from urllib.request import urlopen
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-ALL_BUILDS = ('3.3.0', '3.3.9', '3.6.0', '3.6.9', '4.2.0', '4.2.9', '4.2.23',
-              '4.5.0', '4.5.9', '4.5.14', '5.2.0', '5.2.1', '5.2.2')
+# Keep in sync with bootstrap.ps1 and benchmark_config.toml (verified 2026-10-22).
+ALL_BUILDS = (
+    '3.3.0', '3.3.10', '3.3.21',
+    '3.6.0', '3.6.11', '3.6.23',
+    '4.2.0', '4.2.11', '4.2.23',
+    '4.5.0', '4.5.7', '4.5.15',
+    '5.2.0', '5.2.1', '5.2.3',
+)
 
 
 def file_hash(path):
