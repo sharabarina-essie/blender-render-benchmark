@@ -59,6 +59,7 @@ import datetime
 import gpu
 import blf
 from mathutils import Matrix, Quaternion
+from viewport_animation import action_has_fcurves
 
 # Collect everything printed so we can always write a log file (the GUI System
 # Console is easy to miss / may be closed).
@@ -79,7 +80,7 @@ ORBIT_ITER = 20                # redraws in the SHORT orbit throughput sample
 ORBIT_STEP_DEG = 2.0           # view rotation per orbit frame
 PLAYBACK_MAX = 120             # cap playback steps
 CONVERGE_SAMPLES = 1024        # sample budget the CONVERGE render runs to (e.g. 1024/1024)
-SUSTAINED_S = 20.0             # INTERACTIVE "orbit" test duration in seconds
+SUSTAINED_S = 30.0             # INTERACTIVE "orbit" test duration in seconds
 COLDSTART_RUNS = 5             # "coldstart" test: repeats, each with caches cleared first
 FLYTHROUGH_S = 120.0           # "flythrough" test duration in seconds (wall-clock driven)
 FLY_INTERVAL = 1.0 / 120.0     # requested tick interval; actual cadence is gated by render
@@ -203,12 +204,12 @@ def _camera_path_mode(scene):
     if cam is None or (scene.frame_end - scene.frame_start) <= 0:
         return 'generated'
     ad = cam.animation_data
-    if ad and ad.action and ad.action.fcurves:
+    if action_has_fcurves(ad):
         return 'existing'
     if any(c.type in {'FOLLOW_PATH', 'CLAMP_TO'} for c in cam.constraints):
         return 'existing'
     par = cam.parent
-    if par and par.animation_data and par.animation_data.action and par.animation_data.action.fcurves:
+    if par and action_has_fcurves(par.animation_data):
         return 'existing'
     return 'generated'
 
@@ -389,6 +390,10 @@ class VIEWBENCH_OT_flythrough(bpy.types.Operator):
             self.cy.preview_pause = False
 
         space.shading.type = 'RENDERED'
+        if self.mode == 'existing':
+            # Timeline animation only drives the visible view when this viewport
+            # is looking through the scene camera. Restore the user's view later.
+            self.rv3d.view_perspective = 'CAMERA'
         if self.mode == 'generated' and self.rv3d.view_perspective == 'CAMERA':
             self.rv3d.view_perspective = 'PERSP'
         self.base_rot = self.rv3d.view_rotation.copy()
