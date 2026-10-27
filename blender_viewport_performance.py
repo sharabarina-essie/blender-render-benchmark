@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from viewport_performance import CASES, STANDARD_PROFILE, DrawRecorder, expand_cases
+from viewport_capture import atomic_json
 
 
 def log(message):
@@ -43,9 +44,13 @@ def parse_args():
     parser.add_argument('--label', default='')
     parser.add_argument('--graphics-backend', choices=['opengl'], default='opengl')
     parser.add_argument('--keep-open', action='store_true')
+    parser.add_argument('--capture-method', choices=['desktop', 'blender'], default='blender')
     parser.add_argument('--quality-capture', action='store_true',
                         help='Separate orbit and stop/refine screenshots after the FPS trials')
-    return parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
+    args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
+    if not math.isfinite(args.duration) or args.duration < 30:
+        parser.error('Orbit trials must last at least 30 seconds')
+    return args
 
 
 ARGS = None
@@ -195,9 +200,7 @@ def resize_own_window(delta_width, delta_height):
 
 
 def save_report():
-    temp = ARGS.output / 'report.tmp'
-    temp.write_text(json.dumps(REPORT, indent=2), encoding='utf-8')
-    temp.replace(ARGS.output / 'report.json')
+    atomic_json(ARGS.output / 'report.json', REPORT)
 
 
 def quit_later():
@@ -396,6 +399,9 @@ class VIEWPORT_OT_orbit_performance(bpy.types.Operator):
             if self.callback_error:
                 raise RuntimeError(self.callback_error)
             now = time.perf_counter()
+            if getattr(self, 'pending_capture', None):
+                self.poll_capture(now)
+                return {'RUNNING_MODAL'}
             if self.phase == 'warmup':
                 compiling = hasattr(bpy.app, 'is_job_running') and bpy.app.is_job_running('SHADER_COMPILATION')
                 if now - self.phase_start >= ARGS.warmup and self.warm_draws >= 3 and not compiling:
@@ -404,10 +410,6 @@ class VIEWPORT_OT_orbit_performance(bpy.types.Operator):
                 self.end_run(now)
                 if self.run >= ARGS.runs:
                     self.capture()
-                    if ARGS.quality_capture:
-                        self.start_quality()
-                    else:
-                        self.next_case()
                 else:
                     self.start_run(time.perf_counter())
             elif self.phase.startswith('quality-'):
@@ -476,32 +478,79 @@ class VIEWPORT_OT_orbit_performance(bpy.types.Operator):
 
     def capture(self):
         path = ARGS.output / f'{self.case}.png'
-        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
-            bpy.ops.screen.screenshot_area(filepath=str(path))
         for row in REPORT['results']:
             if row['case'] == self.case:
                 row['screenshot'] = path.name
+                row['capture_method'] = ARGS.capture_method
         save_report()
+        self.take_capture(path, after=self.start_quality if ARGS.quality_capture else self.next_case)
+
+    def take_capture(self, path, frame=None, origin=None, after=None):
+        before = time.perf_counter()
+        if ARGS.capture_method == 'blender':
+            with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
+                bpy.ops.screen.screenshot_area(filepath=str(path))
+            if frame is not None:
+                frame.update(actual_time_s=before-origin, readback_duration_s=time.perf_counter()-before,
+                             capture_method='Blender screenshot_area')
+            save_report()
+            if after:
+                after()
+            return
+        import os
+        request = {'id': time.perf_counter_ns(), 'pid': os.getpid(),
+                   'file': path.relative_to(ARGS.output).as_posix(),
+                   'window_px': [self.window.width, self.window.height],
+                   'region': [self.region.x, self.region.y, self.region.width, self.region.height]}
+        self.pending_capture = {'id': request['id'], 'started': before, 'frame': frame,
+                                'origin': origin, 'after': after}
+        atomic_json(ARGS.output / 'capture_request.json', request)
+
+    def poll_capture(self, now):
+        pending = self.pending_capture
+        if now - pending['started'] > 15:
+            raise RuntimeError('External desktop capture did not respond within 15 seconds')
+        try:
+            response = json.loads((ARGS.output / 'capture_response.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return
+        if response.get('id') != pending['id']:
+            return
+        if response.get('error'):
+            raise RuntimeError('Desktop capture failed: ' + response['error'])
+        if pending['frame'] is not None:
+            pending['frame'].update(actual_time_s=response['captured_at']-pending['origin'],
+                                    readback_duration_s=response['completed_at']-response['captured_at'],
+                                    capture_method=response['capture_method'],
+                                    desktop_bbox=response['desktop_bbox'],
+                                    request_to_capture_s=response['captured_at']-pending['started'])
+        self.pending_capture = None
+        save_report()
+        if pending['after']:
+            pending['after']()
 
     def start_quality(self):
         self.phase = 'quality-motion'
         self.phase_start = time.perf_counter()
         self.quality_next_motion = ARGS.duration / 4
+        self.quality_pause_target_requested = False
         self.quality_stop = None
         self.quality_checkpoints = deque([0, .25, .5, 1, 2, 5, 10, 15])
         self.quality = {'case': self.case, 'frames': [], 'complete': False,
                         'orbit_duration_requested_s': ARGS.duration,
                         'settle_duration_requested_s': 15,
+                        'pause_angles_deg': [90, 180, 270],
+                        'pause_duration_requested_s': 5,
                         'internal_render_resolution_px': None,
                         'completed_samples': None,
                         'settings': self.case_engine_settings,
-                        'capture_scope': 'Blender screenshot_area framebuffer readback; '
-                            'not an agent pre-encoder capture or independent client presentation measurement'}
+                        'capture_scope': ('External Windows desktop pixels; visible, unobscured viewport required'
+                                          if ARGS.capture_method == 'desktop' else 'Blender screenshot_area framebuffer readback')}
         REPORT.setdefault('quality_cases', []).append(self.quality)
         self.hud = f'{self.case}: separate image-quality pass'
         # Remove the previous trial HUD before the first evidence frame.
         self.area.tag_redraw()
-        log(f'{self.case}: separate orbit captures, then 15s stationary refinement')
+        log(f'{self.case}: separate orbit with 5s pauses at 90/180/270 degrees, then 15s final refinement')
 
     def quality_frame(self, phase, requested):
         frame = {'phase': phase, 'requested_time_s': requested,
@@ -511,38 +560,70 @@ class VIEWPORT_OT_orbit_performance(bpy.types.Operator):
                  'requested_revision': self.revision, 'drawn_revision': self.drawn_revision,
                  'viewport_px': [self.region.width, self.region.height],
                  'preview_pixel_size': self.scene.render.preview_pixel_size}
-        origin = self.phase_start if phase == 'moving' else self.quality_stop
-        before = time.perf_counter()
-        frame['actual_time_s'] = before - origin
+        if phase == 'pause':
+            frame.update(pose_index=self.quality_pause_index,
+                         orbit_angle_deg=self.angle, orbit_time_s=self.quality_next_motion)
+        origin = (self.phase_start if phase == 'moving' else
+                  self.quality_pause_started if phase == 'pause' else self.quality_stop)
+        frame['actual_time_s'] = time.perf_counter() - origin
         path = ARGS.output / 'quality' / self.case / f'{len(self.quality["frames"]):02d}_{phase}.png'
         path.parent.mkdir(parents=True, exist_ok=True)
-        with bpy.context.temp_override(window=self.window, area=self.area, region=self.region):
-            bpy.ops.screen.screenshot_area(filepath=str(path))
-        frame['readback_duration_s'] = time.perf_counter() - before
+        frame['readback_duration_s'] = 0
         frame['file'] = path.relative_to(ARGS.output).as_posix()
         self.quality['frames'].append(frame)
         save_report()
+        self.take_capture(path, frame=frame, origin=origin)
 
     def advance_quality(self, now):
         if self.phase == 'quality-motion':
             elapsed = now - self.phase_start
-            if elapsed >= ARGS.duration:
-                # Freeze exactly the last requested pose; do not jump to a new
-                # pose between the moving image and the stationary reference.
-                self.phase = 'quality-drain'
-                self.quality_stop = time.perf_counter()
-            elif elapsed >= self.quality_next_motion and self.revision == self.drawn_revision:
-                self.quality_frame('moving', self.quality_next_motion)
-                self.quality_next_motion += ARGS.duration / 4
+            if elapsed >= self.quality_next_motion:
+                if not self.quality_pause_target_requested:
+                    # Draw the exact checkpoint pose before holding it. This is
+                    # separate from the uninterrupted FPS measurement workload.
+                    self.angle = 360 * self.quality_next_motion / ARGS.duration
+                    self.rv3d.view_rotation = Quaternion((0, 0, 1), math.radians(self.angle)) @ self.base_rotation
+                    self.revision += 1
+                    self.request_phase = self.phase
+                    self.area.tag_redraw()
+                    self.quality_pause_target_requested = True
+                    return
+                if self.revision != self.drawn_revision:
+                    return
+                if self.quality_next_motion >= ARGS.duration:
+                    self.phase = 'quality-drain'
+                    self.quality_stop = time.perf_counter()
+                else:
+                    self.phase = 'quality-pause'
+                    self.quality_pause_started = time.perf_counter()
+                    self.quality_pause_index = round(4 * self.quality_next_motion / ARGS.duration)
+                    self.quality_pause_checkpoints = deque([0, .25, .5, 1, 2, 4, 5])
+                    log(f'{self.case}: pose {self.quality_pause_index}, {self.angle:g} degrees, holding at least 5s')
+                    self.quality_frame('pause', self.quality_pause_checkpoints.popleft())
+                return
             if self.phase == 'quality-motion':
                 self.request_view(time.perf_counter())
+        elif self.phase == 'quality-pause':
+            if self.quality_pause_checkpoints and now-self.quality_pause_started >= self.quality_pause_checkpoints[0]:
+                self.quality_frame('pause', self.quality_pause_checkpoints.popleft())
+            if not self.quality_pause_checkpoints and not getattr(self, 'pending_capture', None):
+                elapsed_hold = time.perf_counter()-self.quality_pause_started
+                # Exclude actual holds (including capture overhead) from the
+                # quality orbit clock, preserving 30+ seconds of active motion.
+                self.phase_start += elapsed_hold
+                self.quality.setdefault('pauses', []).append({
+                    'pose_index': self.quality_pause_index, 'orbit_angle_deg': self.angle,
+                    'actual_hold_s': elapsed_hold})
+                self.quality_next_motion += ARGS.duration/4
+                self.quality_pause_target_requested = False
+                self.phase = 'quality-motion'
         elif self.phase == 'quality-drain' and self.revision == self.drawn_revision:
             self.phase = 'quality-settle'
             self.quality_frame('stopped', self.quality_checkpoints.popleft())
         elif self.phase == 'quality-settle':
             if self.quality_checkpoints and now - self.quality_stop >= self.quality_checkpoints[0]:
                 self.quality_frame('stopped', self.quality_checkpoints.popleft())
-            if not self.quality_checkpoints:
+            if not self.quality_checkpoints and not getattr(self, 'pending_capture', None):
                 self.quality['complete'] = True
                 save_report()
                 self.next_case()
@@ -614,6 +695,7 @@ def main():
     ARGS = parse_args()
     ARGS.output.mkdir(parents=True, exist_ok=True)
     REPORT = {'schema_version': 1, 'complete': False, 'results': [], 'label': ARGS.label,
+              'capture_method': ARGS.capture_method,
               'scene': str(ARGS.scene), 'requested_cases': expand_cases(ARGS.cases),
               'requested_duration_s': ARGS.duration, 'requested_warmup_s': ARGS.warmup,
               'requested_runs': ARGS.runs,

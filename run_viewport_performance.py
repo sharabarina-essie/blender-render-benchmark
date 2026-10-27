@@ -1,6 +1,6 @@
 """Measure orbit draw FPS in Blender's actual UI.
 
-Smoke defaults to Classroom (one 5s run); full defaults to Medieval Fisher Hut
+Smoke defaults to Classroom (one 30s run); full defaults to Medieval Fisher Hut
 (three 30s runs). Both start with Solid and Material Preview at Pixel Size 1x.
 """
 import argparse
@@ -214,14 +214,21 @@ def main():
     parser.add_argument('--graphics-backend', choices=['opengl'], default='opengl')
     parser.add_argument('--label', default='unlabeled')
     parser.add_argument('--timeout', type=float, default=900)
+    parser.add_argument('--capture-method', choices=['desktop', 'blender'],
+                        default='desktop' if sys.platform == 'win32' else 'blender',
+                        help='desktop captures visible Windows pixels outside Blender; window must be unobscured')
     parser.add_argument('--quality-capture', action='store_true',
-                        help='After FPS trials, capture a separate orbit and 15s stop/refine sequence')
+                        help='After FPS trials: orbit with 5s pauses at 90/180/270 degrees, then a final 15s refinement sequence')
     parser.add_argument('--window-size', nargs=2, type=int, default=list(STANDARD_PROFILE['viewport_px']), metavar=('WIDTH', 'HEIGHT'), help='The standard profile requires 1920 1080')
     args = parser.parse_args()
     if args.analyze:
         return reanalyze(args.analyze.resolve())
     profile = 'smoke' if args.smoke else 'full'
-    duration = args.duration if args.duration is not None else (5 if args.smoke else 30)
+    duration = args.duration if args.duration is not None else 30
+    if duration < 30:
+        parser.error('Orbit trials must last at least 30 seconds')
+    if args.capture_method == 'desktop' and sys.platform != 'win32':
+        parser.error('Desktop capture currently requires Windows')
     warmup = args.warmup if args.warmup is not None else (12 if args.smoke else 15)
     runs = args.runs if args.runs is not None else (1 if args.smoke else 3)
     if not all(math.isfinite(value) and value > 0 for value in (duration, warmup, runs, args.samples, args.timeout, *args.window_size)):
@@ -251,15 +258,17 @@ def main():
                'requested_window_px': args.window_size, 'graphics_backend_requested': args.graphics_backend}
     summary['quality_profile'] = dict(STANDARD_PROFILE)
     summary['quality_capture_requested'] = args.quality_capture
+    summary['capture_method'] = args.capture_method
     summary['harness_sha256'] = {name: digest(ROOT / name) for name in (
         'run_viewport_performance.py', 'blender_viewport_performance.py',
-        'viewport_performance.py', 'engine_benchmark.py', 'viewport_quality.py', 'keep_viewport_awake.py')}
+        'viewport_performance.py', 'engine_benchmark.py', 'viewport_quality.py', 'viewport_capture.py', 'keep_viewport_awake.py')}
     (output / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
     cmd = [exe, '--factory-startup', '-p', '40', '40', *map(str, args.window_size),
            '--python-exit-code', '2', '--python', str(ROOT / 'blender_viewport_performance.py'), '--',
            '--scene', str(scene), '--output', str(output), '--cases', ','.join(cases),
            '--duration', str(duration), '--warmup', str(warmup), '--runs', str(runs),
-           '--samples', str(args.samples), '--label', args.label, '--graphics-backend', args.graphics_backend]
+           '--samples', str(args.samples), '--label', args.label, '--graphics-backend', args.graphics_backend,
+           '--capture-method', args.capture_method]
     # Older releases have only OpenGL and do not accept --gpu-backend. Read the
     # executable's CLI capabilities rather than assuming a major/minor boundary.
     help_text = subprocess.check_output([exe, '--help'], text=True, errors='replace', timeout=30)
@@ -276,17 +285,30 @@ def main():
     started = time.monotonic()
     from keep_viewport_awake import awake_request
     with awake_request(), (output / 'blender.log').open('w', encoding='utf-8') as stream:
+        process = None
         try:
             process = subprocess.Popen(cmd, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT)
             try:
-                code = process.wait(timeout=args.timeout)
+                from viewport_capture import DesktopCaptureService
+                service = DesktopCaptureService(output, process.pid) if args.capture_method == 'desktop' else None
+                deadline = time.monotonic() + args.timeout
+                while process.poll() is None:
+                    if service:
+                        service.poll()
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(cmd, args.timeout)
+                    time.sleep(.01 if service else .1)
+                code = process.returncode
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
                 code = 'TIMEOUT'
         except OSError as exc:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
             stream.write(str(exc))
-            code = f'LAUNCH_ERROR: {exc}'
+            code = f'{"CAPTURE_ERROR" if process is not None else "LAUNCH_ERROR"}: {exc}'
     try:
         report = json.loads((output / 'report.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):

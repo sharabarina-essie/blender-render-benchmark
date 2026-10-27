@@ -226,7 +226,7 @@ validation; select NVIDIA for that executable in Windows Graphics settings befor
 retrying. `--label` records a free-text description of the test environment.
 
 ```powershell
-# Classroom smoke: all six shading permutations, one 5-second trial each.
+# Classroom smoke: all six shading permutations, one 30-second trial each.
 python run_viewport_performance.py --blender-version 5.2.1 --smoke --cases all --gpu 'RTX 600' --label native-rtx-ada --timeout 900
 
 # Medieval Hut: reproduce the two quality cases with three 30-second FPS trials.
@@ -263,12 +263,31 @@ stutter is an interval above `max(100ms, 3 * run median interval)`; initial and 
 waits are separate. PASS confirms complete measurements and image sanity; there
 is no minimum FPS threshold.
 
-`--quality-capture` adds a **separate workload after the FPS trials**: moving PNGs
-at quarter-orbit checkpoints, then the frozen requested pose at 0, 0.25, 0.5, 1,
-2, 5, 10 and 15 seconds. Readbacks never enter the timed FPS loop. Actual capture
+`--quality-capture` adds a **separate workload after the FPS trials**: an orbit
+that pauses at **90°, 180° and 270° for at least five seconds each**, capturing
+arrival, 0.25, 0.5, 1, 2, 4 and 5 seconds at each fixed pose. The report displays
+arrival/five-second pairs and compares four versus five seconds for observed stability.
+The final 360° pose is captured at 0, 0.25, 0.5, 1, 2, 5, 10 and 15 seconds.
+Each pose is analyzed independently; images from different poses are not compared.
+The timed orbit does not pause for screenshots. All orbit
+trials, including smoke runs, last at least **30 seconds**; shorter durations are rejected.
+On Windows, `--capture-method desktop` is the default: the host captures the visible
+viewport from the Windows desktop, bypassing Blender framebuffer readback. It raises
+the benchmark window before capture and rejects an obscured/offscreen viewport.
+Keep the viewport unobscured. `--capture-method blender` retains the old readback
+path for explicit comparisons. External capture requests are acknowledged without
+blocking Blender's UI thread. The separate quality orbit briefly holds each requested
+view while its desktop capture completes; those holds are outside the FPS trial.
+Intermediate holds are excluded from the quality orbit's moving clock, preserving
+at least 30 seconds of active orbit movement in addition to the three five-second holds.
+Captures never enter the timed FPS loop. Actual capture
 times and readback overhead are recorded. `quality.html` provides a refinement
 slider; `quality.json` records 8x8 luma SSIM, RGB MAE and relative edge detail
 against the last stationary image, excluding the top 64 pixels and 8-pixel borders.
+The report explicitly compares the **five-second stopped image** with the initial
+and 15-second stopped images, and flags captures arriving more than half a second
+away from the requested five-second checkpoint. Inspect the lossless PNGs at 100%
+to judge clarity: similarity to a later image alone does not prove sharpness.
 Different moving poses are not compared with that reference. Readbacks can perturb
 capture cadence; displayed content can lag the requested pose.
 

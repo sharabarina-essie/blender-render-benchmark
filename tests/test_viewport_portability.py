@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,11 +9,19 @@ from unittest.mock import patch
 import zipfile
 
 import run_viewport_matrix as matrix
+import run_viewport_performance as runner
 from run_viewport_performance import assess
 from setup_viewport_test import extract_archive, prepare_scene, safe_member, verify_scene
 
 
 class ViewportPortabilityTests(unittest.TestCase):
+    def test_short_orbits_are_rejected_by_both_runners(self):
+        for module in (matrix, runner):
+            with self.subTest(module=module.__name__), patch('sys.argv', ['runner', '--duration', '5']), \
+                    patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit) as raised:
+                module.main()
+            self.assertEqual(raised.exception.code, 2)
+
     def test_requested_nvidia_gpu_rejects_integrated_opengl(self):
         report = {'complete': True, 'graphics_backend': 'OPENGL',
                   'renderer': 'AMD Radeon integrated', 'results': [
@@ -116,6 +125,8 @@ class ViewportPortabilityTests(unittest.TestCase):
             self.assertEqual(commands[0][commands[0].index('--model')+1],str(scene))
             saved=json.loads((output/'matrix.json').read_text())
             self.assertEqual(saved['runs'],1)
+            self.assertEqual(saved['duration_s'],30)
+            self.assertIn('--capture-method',commands[0])
             self.assertEqual(saved['label'],'unlabeled')
 
 

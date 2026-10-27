@@ -122,13 +122,17 @@ def main():
     parser.add_argument('--timeout', type=float, default=360, help='Per-combination Blender ceiling in seconds')
     parser.add_argument('--gpu', help='Optional device-name substring; also checked against the OpenGL renderer')
     parser.add_argument('--label', default='unlabeled')
-    parser.add_argument('--smoke', action='store_true', help='Classroom, one 5s trial; full defaults to Medieval Hut, 3 x 30s')
+    parser.add_argument('--smoke', action='store_true', help='Classroom, one 30s trial; full defaults to Medieval Hut, 3 x 30s')
     parser.add_argument('--model', help='Override the scene catalog key or .blend path')
     parser.add_argument('--quality-capture', action='store_true')
+    parser.add_argument('--capture-method', choices=['desktop', 'blender'],
+                        default='desktop' if sys.platform == 'win32' else 'blender')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     args.runs = args.runs if args.runs is not None else (1 if args.smoke else 3)
-    args.duration = args.duration if args.duration is not None else (5 if args.smoke else 30)
+    args.duration = args.duration if args.duration is not None else 30
+    if args.duration < 30:
+        parser.error('Orbit trials must last at least 30 seconds')
     args.warmup = args.warmup if args.warmup is not None else (12 if args.smoke else 15)
     if not all(math.isfinite(v) and v > 0 for v in (args.runs, args.duration, args.warmup, args.timeout)):
         parser.error('Counts and durations must be positive')
@@ -150,6 +154,7 @@ def main():
     if not scene.is_file():
         parser.error(f'Scene not found: {scene}. Run setup_viewport_test.py first.')
     matrix = {'status': 'RUNNING', 'started_at': datetime.now().isoformat(timespec='seconds'),
+              'capture_method': args.capture_method,
               'label': args.label, 'quality_capture': args.quality_capture,
               'scene': str(scene), 'scene_sha256': digest(scene),
               'builds': [path.name for path in builds], 'cases': cases,
@@ -158,7 +163,7 @@ def main():
               'harness_sha256': {name: digest(ROOT / name) for name in (
                   'run_viewport_matrix.py', 'run_viewport_performance.py',
                   'blender_viewport_performance.py', 'viewport_performance.py', 'engine_benchmark.py',
-                  'keep_viewport_awake.py', 'viewport_quality.py')},
+                  'keep_viewport_awake.py', 'viewport_quality.py', 'viewport_capture.py')},
               'cells': [{'build': build.name, 'case': case, 'status': 'PENDING',
                          'directory': f'{build.name}/{case}', 'results': []}
                         for build in builds for case in cases]}
@@ -172,7 +177,7 @@ def main():
                    '--model', str(scene), '--cases', cell['case'], '--runs', str(args.runs),
                    '--duration', str(args.duration), '--warmup', str(args.warmup),
                    '--timeout', str(args.timeout), '--label', args.label,
-                   '--output', str(destination)]
+                   '--output', str(destination), '--capture-method', args.capture_method]
         if args.gpu:
             command += ['--gpu', args.gpu]
         if args.quality_capture:
