@@ -131,6 +131,62 @@ def parse_output(text):
 
 
 # ===========================================================================
+# Interactive table  (mirrors print_table() in interactive_benchmark.py)
+# ===========================================================================
+INTER_HEADER_RE = re.compile(
+    r"Blender\s+(?P<version>\S+)\s+INTERACTIVE\s+GPU=(?P<gpu>.+?)\s+"
+    r"profile=(?P<profile>\S+)\s+frames=(?P<frames>\S+)(?P<tag>.*)"
+)
+
+
+def parse_interactive_output(text):
+    """Extract header metadata + one row per metric from an interactive_benchmark
+    log. Returns (meta_dict, [row_dict, ...]). Row keys: metric, status, median_ms,
+    min_ms, max_ms, derived, reason. Tolerant of a truncated/crashed log."""
+    meta = {"version": None, "gpu": None, "profile": None, "frames": None,
+            "test_tag": None, "invariants_source": None}
+    m = INTER_HEADER_RE.search(text)
+    if m:
+        meta.update(version=m.group("version"), gpu=m.group("gpu").strip(),
+                    profile=m.group("profile"), frames=m.group("frames"),
+                    test_tag=m.group("tag").strip() or None)
+    m = INVARIANTS_RE.search(text)
+    if m:
+        meta["invariants_source"] = m.group("inv").strip()
+
+    rows = []
+    in_table = False
+    for line in text.splitlines():
+        if line.startswith("Metric") and "Status" in line and "|" in line:
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.startswith("-" * 10) or line.startswith("=" * 10):
+            if rows:            # second divider ends the table
+                break
+            continue
+        if "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 6:
+            continue
+        name, status = parts[0], parts[1]
+        row = {"metric": name, "status": status, "median_ms": None, "min_ms": None,
+               "max_ms": None, "derived": None, "reason": None}
+        if status == "OK":
+            row["median_ms"] = _num(parts[2])
+            row["min_ms"] = _num(parts[3])
+            row["max_ms"] = _num(parts[4])
+            row["derived"] = parts[5] or None
+        else:               # SKIP -> reason parenthesised in the last cell
+            rm = REASON_RE.search(parts[5])
+            row["reason"] = rm.group("reason") if rm else None
+        rows.append(row)
+    return meta, rows
+
+
+# ===========================================================================
 # Compositor A/B table  (mirrors print_compositor_table() in engine_benchmark.py)
 # ===========================================================================
 COMP_HEADER_RE = re.compile(

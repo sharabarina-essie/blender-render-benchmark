@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "scenes": {
+    "smoke": {
+      "name": "Classroom",
+      "path": "models/archviz/classroom/classroom/main.blend",
+      "url": "https://download.blender.org/release/BlenderBenchmark2.0/scenes/classroom.tar.bz2",
+      "sha256": "e2e565f9068393720a37e38bf6e85083c47ef06e5100933801cc883e533a28f3",
+      "note": "Keep the complete extracted archive, including linked assets.",
+      "required_links": [
+        "assets/books/books.blend",
+        "assets/chairs/chairs.blend",
+        "assets/coatStand/coatStand.blend",
+        "assets/desks/desks.blend",
+        "assets/dustBin/dustBin.blend",
+        "assets/lamps/lamps.blend",
+        "assets/officeSupplies/officeSupplies.blend",
+        "assets/radiator/radiator.blend",
+        "assets/suitcase/suitcase.blend",
+        "assets/wallClock/wallClock.blend",
+        "assets/wastes/wastes.blend"
+      ]
+    },
+    "full": {
+      "name": "Medieval Fisher Hut",
+      "path": "models/medieval_fisher_hut.blend",
+      "source_page": "https://blendswap.com/blend/30099",
+      "author": "DHCG_1492973",
+      "license": "CC-BY (see source page)",
+      "bytes": 1089161184,
+      "sha256": "512fc4850caa4b995e47e535e6793f91635c6f98640fc7400904a7b6823a589e",
+      "note": "Copy the existing original, or download from the source page after sign-in; no expiring URLs or credentials are stored."
+    }
+  }
+}

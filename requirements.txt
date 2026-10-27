@@ -2,4 +2,6 @@
 # The in-Blender scripts (engine_benchmark.py, qa_standardize_render_settings.py)
 # need only Blender's bundled Python.
 openpyxl>=3.0          # write the results .xlsx
+numpy>=1.24           # image validation metrics
+Pillow>=9.1           # read images and write validation diffs
 tomli>=1.2; python_version < "3.11"   # read benchmark_config.toml (stdlib tomllib on 3.11+)

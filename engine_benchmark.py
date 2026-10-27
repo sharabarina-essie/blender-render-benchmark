@@ -199,6 +199,8 @@ TEST_EEVEE_SAMPLES = 16
 TEST_RES_PERCENTAGE = 25   # 25% of profile res (1920x1080 -> 480x270): fast, still 16:9
 TEST_WORKBENCH_AA = "OFF"  # Workbench anti-aliasing off in test mode
 
+CYCLES_FAMILY = ("CYCLES",)
+
 # ---------------------------------------------------------------------------
 # Setting application
 # ---------------------------------------------------------------------------
@@ -256,7 +258,7 @@ def apply_customer_profile(scene, engine):
     r.use_motion_blur = PROFILE["use_motion_blur"]
     r.use_persistent_data = True   # required for a meaningful warm run
 
-    if engine == "CYCLES":
+    if engine in CYCLES_FAMILY:
         cy = scene.cycles
         # Fixed samples, adaptive OFF -> honest apples-to-apples engine race
         cy.use_adaptive_sampling = False
@@ -399,8 +401,12 @@ def configure_backend(backend_type):
 
     # 2) Enable ONLY physically-present devices (optionally narrowed by --gpu).
     #    Ghosts get use=False, so the renderer only ever touches real hardware and
-    #    the reported GPU list is honest. CPU is never force-enabled.
+    #    the reported GPU list is honest. The CPU entry defaults to use=True in fresh
+    #    prefs, which would make GPU Compute a hybrid CPU+GPU render: force it off.
     _get_devices(cprefs)
+    for dev in cprefs.devices:
+        if dev.type == 'CPU':
+            dev.use = False
     type_devs = [d for d in cprefs.devices if d.type == backend_type]
     type_present = len(type_devs)
     if type_present == 0:
@@ -427,6 +433,24 @@ def configure_backend(backend_type):
         return False, [], f"{backend_type} present but no active device (driver/kernel?)"
 
     return True, matched, "ok"
+
+
+def _configure_setup(setup):
+    """Point the scene at a setup's engine/device. Returns (ok, devices, detail)."""
+    engine, backend = setup["engine"], setup["backend"]
+    if engine == "CYCLES":
+        return configure_backend(backend)
+    eng_id = _resolve_engine_id(engine, bpy.context.scene)   # Eevee id varies by version
+    bpy.context.scene.render.engine = eng_id                 # EEVEE (Next/legacy) or Workbench
+    return True, [], f"engine={eng_id}"
+
+
+def _one_line(exc):
+    """An exception as one table-safe line: parentheses would break the parser's
+    '(reason)' match, and newlines the row."""
+    text = re.sub(r"\s+", " ", str(exc)).strip()
+    text = re.sub(r"^Error:\s*", "", text)
+    return text.replace("(", "[").replace(")", "]") or type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -536,22 +560,29 @@ def benchmark_engine(setup):
     name, engine, backend = setup["name"], setup["engine"], setup["backend"]
     print(f"\n>>> {name} <<<")
 
-    devices = []
-    if engine == "CYCLES":
-        ok, devices, reason = configure_backend(backend)
-        if not ok:
-            print(f"    SKIPPED: {reason}")
-            return {"status": "SKIPPED", "reason": reason}
+    is_cycles = engine in CYCLES_FAMILY
+    ok, devices, detail = _configure_setup(setup)
+    if not ok:
+        print(f"    SKIPPED: {detail}")
+        return {"status": "SKIPPED", "reason": detail}
+    if is_cycles:
         print(f"    Active {backend} device(s): {', '.join(devices)}")
     else:
-        eng_id = _resolve_engine_id(engine, scene)   # Eevee id varies by version
-        scene.render.engine = eng_id                 # EEVEE (Next/legacy) or Workbench
-        print(f"    {name} (GPU rasterizer, engine={eng_id})")
+        print(f"    {name} (GPU rasterizer, {detail})")
 
     apply_customer_profile(scene, engine)
 
-    is_cycles = (engine == "CYCLES")
+    # A render error raises from bpy.ops; keep the remaining table available.
+    # from bpy.ops; record it as this engine's row instead of losing the table.
+    try:
+        return _measure_engine(scene, name, is_cycles, devices)
+    except RuntimeError as e:
+        reason = _one_line(e)
+        print(f"    FAILED: {reason}")
+        return {"status": "FAILED", "reason": reason}
 
+
+def _measure_engine(scene, name, is_cycles, devices):
     # --- RAW (denoise off) ---
     if is_cycles:
         scene.cycles.use_denoising = False
@@ -619,33 +650,36 @@ def benchmark_compositor(setup):
         print("    SKIPPED: compositor_device not available (Blender < 4.0)")
         return {"status": "SKIPPED", "reason": "no compositor_device (<4.0)"}
 
-    devices = []
-    if engine == "CYCLES":
-        ok, devices, reason = configure_backend(backend)
-        if not ok:
-            print(f"    SKIPPED: {reason}")
-            return {"status": "SKIPPED", "reason": reason}
+    is_cycles = engine in CYCLES_FAMILY
+    ok, devices, detail = _configure_setup(setup)
+    if not ok:
+        print(f"    SKIPPED: {detail}")
+        return {"status": "SKIPPED", "reason": detail}
+    if is_cycles:
         print(f"    Active {backend} device(s): {', '.join(devices)}")
     else:
-        eng_id = _resolve_engine_id(engine, scene)   # Eevee id varies by version
-        scene.render.engine = eng_id                 # EEVEE (Next/legacy) or Workbench
-        print(f"    {name} (GPU rasterizer, engine={eng_id})")
+        print(f"    {name} (GPU rasterizer, {detail})")
 
     apply_customer_profile(scene, engine)
-    if engine == "CYCLES":
+    if is_cycles:
         scene.cycles.use_denoising = False   # isolate the compositor, not denoise
 
     scene.frame_set(WARM_FRAME)
-    _timed_render()                          # reach render steady-state first
-    if engine != "CYCLES":                   # EEVEE: record the actual GL GPU used
-        gl = _gl_renderer_string()
-        if gl:
-            devices = [gl]
+    try:
+        _timed_render()                      # reach render steady-state first
+        if not is_cycles:                    # EEVEE: record the actual GL GPU used
+            gl = _gl_renderer_string()
+            if gl:
+                devices = [gl]
+        cpu = _warm_with_compositor(scene, "CPU")
+    except RuntimeError as e:
+        reason = _one_line(e)
+        print(f"    FAILED: {reason}")
+        return {"status": "FAILED", "reason": reason}
 
     result = {"status": "OK", "devices": devices}
 
     # CPU compositor
-    cpu = _warm_with_compositor(scene, "CPU")
     result.update(cpu_med=statistics.median(cpu), cpu_min=min(cpu), cpu_max=max(cpu))
     print(f"    CPU compositor: {statistics.median(cpu):.3f}s (median)")
 
@@ -682,7 +716,6 @@ _ENGINE_ALIASES = {
     "WORKBENCH": [{"name": "Workbench", "engine": "BLENDER_WORKBENCH", "backend": None}],
     "WB":  [{"name": "Workbench", "engine": "BLENDER_WORKBENCH", "backend": None}],
 }
-
 
 _USAGE = """\
 engine_benchmark.py -- OFFLINE per-engine render benchmark (runs INSIDE Blender).
@@ -813,17 +846,26 @@ def _res_str():
 
 
 def _extract_model():
-    """The model under test = the .blend filename (sans extension), or the
-    scene name if the file is unsaved."""
+    """The model under test = the .blend filename (sans extension), or its folder
+    for a generic 'main.blend' (benchmark scenes), or the scene name if unsaved."""
     try:
         fp = bpy.data.filepath
         if fp:
-            return os.path.splitext(os.path.basename(fp))[0]
+            name = os.path.splitext(os.path.basename(fp))[0]
+            if name.lower() == "main":
+                name = os.path.basename(os.path.dirname(fp)) or name
+            return name
     except Exception as exc:
         # Best-effort metadata extraction: if filepath access fails, fall back
         # to the active scene name instead of aborting benchmark reporting.
         print(f"[warn] Could not extract model name from filepath: {exc}", file=sys.stderr)
     return bpy.context.scene.name
+
+
+def _status_cell(m):
+    """Table status for a non-OK result: FAIL = the render errored, SKIP = the
+    engine/device was never available."""
+    return "FAIL" if m["status"] == "FAILED" else "SKIP"
 
 
 def print_table(results):
@@ -845,12 +887,12 @@ def print_table(results):
     else:
         print("  compositor: none (render times are pure engine)")
     print("=" * 92)
-    print(f"{'Engine':<16} | {'Status':<8} | {'Cold(s)':>9} | "
+    print(f"{'Engine':<20} | {'Status':<8} | {'Cold(s)':>9} | "
           f"{'Warm raw med':>13} | {'Warm den med':>13} | {'Denoise+':>9}")
     print("-" * 92)
     for name, m in results.items():
         if m["status"] != "OK":
-            print(f"{name:<16} | {'SKIP':<8} | {'':>9} | {'':>13} | {'':>13} | "
+            print(f"{name:<20} | {_status_cell(m):<8} | {'':>9} | {'':>13} | {'':>13} | "
                   f"{'':>9}   ({m['reason']})")
             continue
         cold = f"{m['cold_raw']:.3f}"
@@ -860,7 +902,7 @@ def print_table(results):
             dover = f"+{m['warm_den_med'] - m['warm_raw_med']:.3f}"
         else:
             wden, dover = "  n/a", "  n/a"
-        print(f"{name:<16} | {'OK':<8} | {cold:>9} | {wraw:>13} | {wden:>13} | {dover:>9}")
+        print(f"{name:<20} | {'OK':<8} | {cold:>9} | {wraw:>13} | {wden:>13} | {dover:>9}")
     print("-" * 92)
     print("  Cold = parse + BVH/kernel compile (one-shot).  "
           "Warm = cached steady-state (median of N).")
@@ -880,12 +922,12 @@ def print_compositor_table(results):
     print(f"  Blender {_extract_version()} COMPOSITOR A/B   GPU={_extract_gpu()}   "
           f"profile={_extract_model()}   {_res_str()}{tag}")
     print("=" * 92)
-    print(f"{'Engine':<16} | {'Status':<8} | {'CPU comp med':>13} | "
+    print(f"{'Engine':<20} | {'Status':<8} | {'CPU comp med':>13} | "
           f"{'GPU comp med':>13} | {'GPU-CPU':>9}")
     print("-" * 92)
     for name, m in results.items():
         if m["status"] != "OK":
-            print(f"{name:<16} | {'SKIP':<8} | {'':>13} | {'':>13} | "
+            print(f"{name:<20} | {_status_cell(m):<8} | {'':>13} | {'':>13} | "
                   f"{'':>9}   ({m['reason']})")
             continue
         cpu = f"{m['cpu_med']:.3f}"
@@ -895,7 +937,7 @@ def print_compositor_table(results):
         else:
             gpu = "  ERR"
             delta = f"({(m.get('gpu_error') or '?')[:18]})"
-        print(f"{name:<16} | {'OK':<8} | {cpu:>13} | {gpu:>13} | {delta:>9}")
+        print(f"{name:<20} | {'OK':<8} | {cpu:>13} | {gpu:>13} | {delta:>9}")
     print("-" * 92)
     print("  Full warm render time (render + compositor), median of N. Delta")
     print("  isolates compositor_device: GPU-CPU > 0 means GPU compositing is the")
@@ -951,6 +993,9 @@ def main():
     apply_scene_controls(scene)  # clear stray region + pin compositor device
 
     engine_arg = args["engine"]
+    if engine_arg and engine_arg not in _ENGINE_ALIASES:
+        print(f"[args] unknown --engine '{engine_arg}'. Valid: {', '.join(_ENGINE_ALIASES)}")
+        return
     setups = _ENGINE_ALIASES.get(engine_arg, ALL_SETUPS) if engine_arg else ALL_SETUPS
     single_process = engine_arg is not None
 

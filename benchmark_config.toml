@@ -7,6 +7,7 @@
 # TWO test suites (see --suite):
 #   cycles : engines CUDA + OptiX on each version's `cycles_models` (its splash scene)
 #   eevee  : engine EEVEE on each version's `eevee_models` (EEVEE demo scenes)
+#   archviz: CUDA + OptiX + EEVEE on each version's `archviz_models` (heavy interiors/exteriors)
 # Compositor A/B picks one Cycles + one EEVEE model per version (compositor_* below).
 
 # ---------------------------------------------------------------------------
@@ -27,49 +28,90 @@ splash_5_2 = "blender-5.2-splash.blend"
 eevee_hatching = "eevee/hatching.blend"
 eevee_temple   = "eevee/temple.blend"
 eevee_elephant = "eevee/mr_elephant.blend"
+# --- Archviz scenes (Cycles-authored; Blender Benchmark 2.0 scenes + Lone Monk demo).
+#     Cycles peak VRAM (Blender Open Data reports): classroom ~1.5 GB, barbershop ~3.5 GB,
+#     junkshop ~5.5 GB; pavillon and lone_monk not published -- all fit a 12 GB card.
+#     lone_monk is saved by Blender 5.2 (new file format): only 4.5+ can open it.
+archviz_classroom  = "archviz/classroom/classroom/main.blend"
+archviz_barbershop = "archviz/barbershop/barbershop_interior/main.blend"
+archviz_junkshop   = "archviz/junkshop/junkshop/main.blend"
+archviz_pavillon   = "archviz/pavillon/pavillon_barcelona/main.blend"
+archviz_lone_monk  = "archviz/lone_monk.blend"
+# --- Heavy scenes (~1 GB .blend; UI render suite only, via heavy_models). Saved by
+#     Blender 3.3 (big_ben) and 2.93 (fisher_hut): every line can open them.
+heavy_big_ben    = "big_ben_london.blend"
+heavy_fisher_hut = "medieval_fisher_hut.blend"
 
 # ---------------------------------------------------------------------------
-# BLENDER VERSIONS  (bundled portable builds under blender/<version>/)
+# BLENDER VERSIONS  (one table per release line, e.g. "4.5")
+#   Pinned 2026-10-22: first, lower patch-number midpoint, latest Windows x64 build.
+#   Update bootstrap.ps1 and setup_viewport_test.py when changing these lists.
+#   builds        : exact patch builds of the line, each a portable build under
+#                   <builds_dir>/<x.y.z>/blender.exe (bootstrap.ps1 installs them).
+#                   --blender-version 4.5 runs the default_build (else the last);
+#                   --blender-version 4.5.0 runs that build; --all-builds runs all.
+#                   Every build uses its line's model lists below.
 #   cycles_models / eevee_models : catalog keys the two suites run on this version.
 #   compositor_cycles / compositor_eevee : the single scene each compositor A/B uses.
 # ---------------------------------------------------------------------------
 [blender]
 default_version = "4.5"
+builds_dir = "blender"
 script = "engine_benchmark.py"
+interactive_script = "interactive_benchmark.py"   # the "interactive" suite (Tier-1)
 cycles_engines = ["CUDA", "OPTIX"]   # the "cycles" suite
 eevee_engines  = ["EEVEE"]           # the "eevee" suite
+# The "archviz" suite: archviz_models under final-render Cycles and the EEVEE
+# preview/lookdev pass designers use on the same scene.
+archviz_engines = ["CUDA", "OPTIX", "EEVEE"]
+# The interactive suite (--suite interactive) measures headless depsgraph re-eval
+# (frame scrub -> playback fps, transform latency, subsurf sweep). It has NO engine
+# dimension (eval cost is engine-independent) and runs on each version's
+# `interactive_models`; when that is unset it uses the UNION of cycles_models +
+# eevee_models (both scene sets), so the heavy Cycles splashes are covered too.
+# Single-frame scenes skip the frame-scrub metric; transform/subsurf still run.
 
 # Note: the compositor CPU-vs-GPU A/B needs scene.render.compositor_device,
 # which exists only on Blender 4.0+. Pre-4.0 versions (3.3, 3.6) therefore define
 # no compositor_* picks -- the compositor suite skips them.
 [blender.versions."3.3"]
-exe = "blender/3.3/blender.exe"
+builds = ["3.3.0", "3.3.10", "3.3.21"]
 cycles_models = ["splash_3_3"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
+archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
+heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 
 [blender.versions."3.6"]
-exe = "blender/3.6/blender.exe"
+builds = ["3.6.0", "3.6.11", "3.6.23"]
 cycles_models = ["splash_3_6", "splash_3_4"]
 eevee_models  = ["eevee_temple", "eevee_elephant"]
+archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
+heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 
 [blender.versions."4.2"]
-exe = "blender/4.2/blender.exe"
+builds = ["4.2.0", "4.2.11", "4.2.23"]
 cycles_models = ["splash_4_2", "splash_4_1"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
+archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon"]
+heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 compositor_cycles = "splash_4_2"
 compositor_eevee  = "splash_4_2"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."4.5"]
-exe = "blender/4.5/blender.exe"
+builds = ["4.5.0", "4.5.7", "4.5.15"]
 cycles_models = ["splash_4_5"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
+archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]
+heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 compositor_cycles = "splash_4_5"
 compositor_eevee  = "splash_4_5"   # splash (has a compositor) rendered under EEVEE
 
 [blender.versions."5.2"]
-exe = "blender/5.2/blender.exe"
+builds = ["5.2.0", "5.2.1", "5.2.3"]
 cycles_models = ["splash_5_2"]
 eevee_models  = ["eevee_temple", "eevee_elephant", "eevee_hatching"]
+archviz_models = ["archviz_classroom", "archviz_barbershop", "archviz_junkshop", "archviz_pavillon", "archviz_lone_monk"]
+heavy_models   = ["heavy_big_ben", "heavy_fisher_hut"]
 compositor_cycles = "splash_4_5"   # 5.2 splash has no compositor tree; use the 4.5 splash (opens in 5.2)
 compositor_eevee  = "splash_4_5"   # same scene under EEVEE
 
@@ -78,7 +120,7 @@ compositor_eevee  = "splash_4_5"   # same scene under EEVEE
 # ---------------------------------------------------------------------------
 [run]
 mode = "test"                  # "test" (fast, --test flag) or "full" (real benchmark)
-suite = "cycles"               # default suite when --suite is not given: cycles | eevee | all
+suite = "cycles"               # default suite when --suite is not given: cycles | eevee | archviz | interactive | all
 timeout_test_sec = 1800
 timeout_full_sec = 14400
 log_dir = "logs"

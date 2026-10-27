@@ -62,7 +62,8 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_benchmark_suite import (load_config, SCRIPT_DIR, DEFAULT_CONFIG_PATH,
                                  decode_process_status, failure_status_label,
-                                 select_blender, print_versions, engines_for_suite)
+                                 select_blender, print_versions, engines_for_suite,
+                                 expand_selection, version_cfg_for)
 
 
 def comp_targets(version_cfg, blender_cfg, args):
@@ -224,9 +225,12 @@ def parse_args():
     p.add_argument("--blender", default=None,
                    help="full path to a blender.exe -- raw override, wins over --blender-version")
     p.add_argument("--blender-version", default=None,
-                   help="select Blender by key(s) from [blender.versions], comma-separated")
+                   help="select Blender by line or exact build, comma-separated "
+                        "(e.g. 4.5 or 4.5.0)")
     p.add_argument("--all-versions", action="store_true",
                    help="run the compositor A/B for every configured version")
+    p.add_argument("--all-builds", action="store_true",
+                   help="expand each selected line into ALL of its builds")
     p.add_argument("--list-versions", action="store_true",
                    help="print the configured [blender.versions] and exit")
     p.add_argument("--script", default=None, help="default: [blender].script in config")
@@ -276,17 +280,18 @@ def main():
     if args.blender:
         exe, _vm, lbl = select_blender(blender_cfg, args.blender, None)
         selections = [(None, exe, lbl)]
-    elif args.all_versions:
-        selections = [(k, select_blender(blender_cfg, None, k)[0],
-                       select_blender(blender_cfg, None, k)[2]) for k in sorted(all_versions)]
-    elif args.blender_version:
-        keys = [k.strip() for k in args.blender_version.split(",") if k.strip()]
-        selections = [(k, select_blender(blender_cfg, None, k)[0],
-                       select_blender(blender_cfg, None, k)[2]) for k in keys]
+    elif not all_versions:
+        exe, _vm, lbl = select_blender(blender_cfg, None, None)   # legacy single exe
+        selections = [(None, exe, lbl)]
     else:
-        dk = blender_cfg.get("default_version")
-        exe, _vm, lbl = select_blender(blender_cfg, None, None)
-        selections = [(dk, exe, lbl)]
+        if args.all_versions:
+            keys = sorted(all_versions)
+        elif args.blender_version:
+            keys = [k.strip() for k in args.blender_version.split(",") if k.strip()]
+        else:
+            select_blender(blender_cfg, None, None)   # exits if no default_version
+            keys = [blender_cfg["default_version"]]
+        selections = [s for k in keys for s in expand_selection(blender_cfg, k, args.all_builds)]
 
     if not os.path.isfile(benchmark_script):
         sys.exit(f"engine_benchmark.py not found: {benchmark_script}")
@@ -310,7 +315,7 @@ def main():
         if not args.dry_run and not os.path.isfile(blender_exe):
             print(f"[warn] {blabel}: blender.exe not found, skipping: {blender_exe}")
             continue
-        version_cfg = all_versions.get(vkey) if vkey else None
+        version_cfg = version_cfg_for(blender_cfg, vkey)
         targets = comp_targets(version_cfg, blender_cfg, args)   # [(model_key, engines), ...]
         if not targets:
             print(f"    {blabel}: no compositor models configured (compositor_cycles/_eevee)")

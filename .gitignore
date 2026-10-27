@@ -7,3 +7,11 @@ __pycache__/
 # Downloaded by bootstrap.cmd from official blender.org URLs — never committed.
 blender/
 models/
+
+# Local engineering notes stay outside source control.
+HANDOFF.md
+*.local.md
+
+# Manually supplied scenes and Blender backups stay outside source control.
+*.blend
+*.blend[0-9]*
