@@ -1,0 +1,3 @@
+# Host Python only; Blender uses its own bundled Python and the standard library.
+numpy>=1.24
+Pillow>=9.1

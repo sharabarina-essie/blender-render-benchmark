@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; worker-src blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Image Compare</title>
+<style>
+:root{font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#e6eaf1;background:#10131a;--panel:#1a1f2a;--line:#343c4e;--muted:#aab5c9;--a:#8db9ff;--b:#8fe0c0}
+*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,select,input[type=number]{background:#252d3c;color:inherit;border:1px solid #4a5670;border-radius:6px;padding:7px 10px}button{cursor:pointer}button:hover:enabled{background:#344057}button:disabled{opacity:.4;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #8db9ff;outline-offset:3px}input[type=range]{accent-color:#8db9ff;max-width:200px;vertical-align:middle}input[type=number]{width:76px}label{display:inline-flex;align-items:center;gap:7px}h1{font-size:25px;margin:0;letter-spacing:-.6px}p{margin:6px 0}.muted{color:var(--muted)}header{padding:22px 28px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:20px}.badge{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:5px 12px;white-space:nowrap;color:var(--muted)}main{padding:20px 28px 30px;max-width:1900px;margin:auto}.sources{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center}.source{padding:16px;border:1px dashed #566480;border-radius:10px;background:var(--panel);min-width:0;display:flex;gap:14px;align-items:center}.source.drag{outline:2px solid var(--a);background:#23314a}.source img{width:86px;height:62px;object-fit:contain;background:#090c11;border:1px solid var(--line);border-radius:4px}.source .copy{flex:1;min-width:0}.source strong{font-size:15px}.source.a strong{color:var(--a)}.source.b strong{color:var(--b)}.filename{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12px}.source input{display:none}.source button{white-space:nowrap}.toolbar{margin-top:18px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--panel);padding:12px;border:1px solid var(--line);border-radius:9px 9px 0 0}.group{display:inline-flex;align-items:center;gap:7px}.spacer{flex:1}.stage{height:clamp(320px,56vh,740px);position:relative;overflow:hidden;background:#090c11;border:1px solid var(--line);border-top:0;touch-action:none}.stage canvas{display:block;width:100%;height:100%;cursor:grab}.stage canvas:active{cursor:grabbing}.empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none;padding:20px}.empty b{font-size:22px;font-weight:600}.empty span{color:var(--muted);margin-top:6px}.viewer-footer{padding:8px 12px;background:var(--panel);border:1px solid var(--line);border-top:0;border-radius:0 0 9px 9px;display:flex;justify-content:space-between;gap:15px;font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--muted);min-height:36px}.status{min-height:28px;margin:10px 0;color:var(--muted)}.status.error{color:#ffadad}.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:12px 0}.metric{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}.metric .name{color:var(--muted);font-size:12px}.metric .value{font-size:24px;font-weight:650;letter-spacing:-.6px;font-variant-numeric:tabular-nums}.metric .unit{font-size:11px;color:var(--muted)}.settings{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;margin:16px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px}.panel h2{margin:0 0 12px;font-size:15px}.fields{display:flex;flex-wrap:wrap;align-items:center;gap:12px}.note{font-size:12px;color:var(--muted);margin-top:10px}.actions{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}details{border:1px solid var(--line);padding:12px 16px;border-radius:9px;margin-top:16px}summary{cursor:pointer;font-weight:600}details p,details li{color:var(--muted);font-size:13px}details ul{padding-left:22px}a{color:var(--a)}[hidden]{display:none!important}.kbd{border:1px solid #4a5670;border-radius:4px;padding:1px 5px;font:11px ui-monospace,monospace}.legend-a{color:var(--a)}.legend-b{color:var(--b)}
+@media(max-width:1000px){.metrics{grid-template-columns:repeat(3,1fr)}.settings{grid-template-columns:1fr}.source img{display:none}.source{flex-wrap:wrap}.source .copy{flex-basis:100%}.source button{width:100%}}@media(max-width:600px){header,main{padding:14px}header .badge{display:none}.metrics{grid-template-columns:repeat(2,1fr)}.sources{gap:7px}.source{padding:10px}.toolbar{gap:10px}.viewer-footer{flex-direction:column;gap:0}.stage{height:360px}}
+</style>
+</head>
+<body>
+<header><div><h1>Image Compare</h1><p class="muted">Inspect renders, screenshots and visual regressions.</p></div><span class="badge">Offline · files stay on this device</span></header>
+<main>
+<section class="sources" aria-label="Images to compare">
+ <div class="source a" id="dropA"><img id="thumbA" alt="Reference preview" hidden><div class="copy"><strong>A · Reference</strong><div class="filename" id="nameA">Drop an image or choose a file</div><div class="filename" id="infoA">PNG, JPEG or WebP</div></div><button id="chooseA">Choose image A</button><input type="file" id="fileA" accept="image/png,image/jpeg,image/webp"></div>
+ <button id="swap" disabled title="Swap reference and candidate" aria-label="Swap reference and candidate">⇄</button>
+ <div class="source b" id="dropB"><img id="thumbB" alt="Candidate preview" hidden><div class="copy"><strong>B · Candidate</strong><div class="filename" id="nameB">Drop an image or choose a file</div><div class="filename" id="infoB">PNG, JPEG or WebP</div></div><button id="chooseB">Choose image B</button><input type="file" id="fileB" accept="image/png,image/jpeg,image/webp"></div>
+</section>
+<div class="toolbar">
+ <label>View <select id="mode"><option value="split">Wipe slider</option><option value="side">Side by side</option><option value="diff">Difference</option><option value="blend">Blend</option><option value="blink">Blink A / B</option><option value="a">Reference A</option><option value="b">Candidate B</option></select></label>
+ <label id="wipeControl">Wipe <input id="wipe" type="range" min="0" max="100" value="50" aria-label="Wipe position"></label>
+ <label id="blendControl" hidden>B opacity <input id="blend" type="range" min="0" max="100" value="50" aria-label="Candidate opacity"></label>
+ <label id="blinkControl" hidden>Interval <select id="blinkTime"><option value="250">250 ms</option><option value="500" selected>500 ms</option><option value="1000">1 s</option></select></label>
+ <label id="gainControl" hidden>Gain <select id="gain"><option value="1">1×</option><option value="4">4×</option><option value="8" selected>8×</option><option value="16">16×</option><option value="32">32×</option></select></label>
+ <span class="spacer"></span><button id="fit">Fit</button><button id="actual">100%</button><button id="zoomOut" aria-label="Zoom out">−</button><span id="zoomLabel">100%</span><button id="zoomIn" aria-label="Zoom in">+</button>
+</div>
+<div class="stage" id="stage"><canvas id="viewer" aria-label="Image comparison viewer. Drag to pan and scroll to zoom." tabindex="0"></canvas><div class="empty" id="empty"><b>Start with two images</b><span>Choose A and B above, or drop two files here.<br>Same camera, frame and dimensions give meaningful comparisons.</span></div></div>
+<div class="viewer-footer"><span id="pixel">Move over an image to inspect a pixel.</span><span id="viewLabel">Scroll to zoom · drag to pan · F to fit</span></div>
+<div id="status" class="status" role="status" aria-live="polite">Ready. No files are uploaded and no network connection is used.</div>
+<section class="metrics" aria-label="Comparison metrics">
+ <div class="metric"><div class="name">RGB mean absolute error</div><div class="value" id="mae">—</div><div class="unit">0 is identical · scale 0–255</div></div>
+ <div class="metric"><div class="name">RGB root mean square error</div><div class="value" id="rmse">—</div><div class="unit">0 is identical · scale 0–255</div></div>
+ <div class="metric"><div class="name">RGB PSNR</div><div class="value" id="psnr">—</div><div class="unit">Higher is closer · dB</div></div>
+ <div class="metric"><div class="name">Luma SSIM · 8×8 blocks</div><div class="value" id="ssim">—</div><div class="unit">1 is identical</div></div>
+ <div class="metric"><div class="name">Changed RGB pixels</div><div class="value" id="changed">—</div><div class="unit">Above the selected tolerance</div></div>
+ <div class="metric"><div class="name">Alpha mean absolute error</div><div class="value" id="alpha">—</div><div class="unit">0 is identical · scale 0–255</div></div>
+</section>
+<section class="settings" aria-label="Scoring settings and export">
+ <div class="panel"><h2>Scored region</h2><div class="fields"><label>Top <input id="top" type="number" min="0" step="1" value="0"></label><label>Right <input id="right" type="number" min="0" step="1" value="0"></label><label>Bottom <input id="bottom" type="number" min="0" step="1" value="0"></label><label>Left <input id="left" type="number" min="0" step="1" value="0"></label></div><div class="fields" style="margin-top:12px"><label><input type="checkbox" id="showRegion" checked> Show region outline</label><button id="resetRegion">Reset margins</button></div><p class="note">Margins in source pixels. Exclude FPS counters, window borders or other changing UI. Images are never resized for scoring.</p></div>
+ <div class="panel"><h2>Tolerance and evidence</h2><div class="fields"><label>RGB tolerance <input id="threshold" type="number" min="0" max="255" step="1" value="0"></label><span class="muted">per channel, 0–255</span></div><div class="actions"><button id="exportDiff" disabled>Save difference PNG</button><button id="exportReport" disabled>Save metrics JSON</button></div><p class="note" id="metricDetail">A pixel is changed when any RGB channel differs by more than the tolerance. Tolerance does not change MAE, RMSE, PSNR or SSIM.</p></div>
+</section>
+<details><summary>How to use and interpret this comparison</summary><ul>
+ <li>Load an approved render as A and the image under test as B. Match camera, animation frame, resolution, color management and render settings.</li>
+ <li>Use the wipe slider or blink to find missing objects and shifted edges. Inspect at 100% or above for pixelation, gray strips and texture detail. Side-by-side views share zoom and pan.</li>
+ <li>Difference shows absolute RGB error, multiplied by Gain for visibility. Gain does not affect metrics. The saved difference is full-size, black outside the scored region, with no viewer decorations.</li>
+ <li>Metrics use browser-decoded 8-bit sRGB, composited over black; alpha is also scored separately. Browser color conversion and rounding can affect results. This is a display-image tool, not a linear-light, HDR or raw-file comparator. Export EXR/HDR/16-bit renders to matched sRGB PNGs first; raw high-depth differences need a separate workflow.</li>
+ <li>SSIM uses non-overlapping 8×8 luminance blocks (Rec.709 weights), population variance, C1 = 2.55² and C2 = 7.65². Partial edge blocks are included, weighted by pixel count. This variant may differ from other SSIM tools.</li>
+ <li>SSIM and PSNR describe similarity; they cannot prove correct rendering or identify a compression codec. Denoising, noise seeds and different viewpoints can change the scores. No automatic pass/fail is assigned.</li>
+ <li>PNG, JPEG and WebP are accepted. Animated images, SVG, EXR, HDR and other formats are outside this tool’s scope. Each image is limited to 40 million pixels. Files are read locally; the tool contains no remote scripts or network calls.</li>
+ <li>Keyboard shortcuts in the viewer: <span class="kbd">F</span> fit, <span class="kbd">1</span> actual pixels, <span class="kbd">+</span> / <span class="kbd">−</span> zoom. For native versus remote QA, compare saved renders and displayed screenshots as separate checks.</li>
+</ul></details>
+</main>
+<script>
+'use strict';
+// Standalone worker function: kept self-contained for browser use and numerical tests.
+function comparePixels(event) {
+ try {
+  const {width:w, height:h, a:ab, b:bb, margins:m, threshold, gain} = event.data;
+  const a = new Uint8ClampedArray(ab), b = new Uint8ClampedArray(bb);
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || a.length !== w*h*4 || b.length !== a.length) throw Error('Invalid image dimensions or pixel buffers.');
+  if (!m || !['top','right','bottom','left'].every(k => Number.isInteger(m[k]) && m[k]>=0) || m.left+m.right>=w || m.top+m.bottom>=h) throw Error('Margins must leave at least one pixel to compare.');
+  if (!Number.isInteger(threshold) || threshold<0 || threshold>255 || !Number.isFinite(gain) || gain<1 || gain>32) throw Error('Invalid tolerance or difference gain.');
+  const x0=m.left, x1=w-m.right, y0=m.top, y1=h-m.bottom, count=(x1-x0)*(y1-y0);
+  const diff = new Uint8ClampedArray(w*h*4);
+  for(let i=3;i<diff.length;i+=4) diff[i]=255;
+  let abs=0, square=0, max=0, changed=0, alphaAbs=0, alphaChanged=0;
+  const overBlack=(v,alpha)=>Math.round(v*alpha/255);
+  for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++) {
+   const i=(y*w+x)*4; let largest=0;
+   for(let c=0;c<3;c++) {
+    const d=Math.abs(overBlack(a[i+c],a[i+3])-overBlack(b[i+c],b[i+3]));
+    abs+=d; square+=d*d; largest=Math.max(largest,d); diff[i+c]=Math.min(255,d*gain);
+   }
+   max=Math.max(max,largest); if(largest>threshold) changed++;
+   const da=Math.abs(a[i+3]-b[i+3]); alphaAbs+=da; if(da>0) alphaChanged++;
+  }
+  let ssimSum=0;
+  const c1=2.55**2,c2=7.65**2;
+  for(let by=y0;by<y1;by+=8) for(let bx=x0;bx<x1;bx+=8) {
+   const ey=Math.min(by+8,y1),ex=Math.min(bx+8,x1),n=(ey-by)*(ex-bx);
+   let sx=0,sy=0,sxx=0,syy=0,sxy=0;
+   for(let y=by;y<ey;y++) for(let x=bx;x<ex;x++) {
+    const i=(y*w+x)*4;
+    const l=(p)=>.2126*overBlack(p[i],p[i+3])+.7152*overBlack(p[i+1],p[i+3])+.0722*overBlack(p[i+2],p[i+3]);
+    const u=l(a),v=l(b); sx+=u;sy+=v;sxx+=u*u;syy+=v*v;sxy+=u*v;
+   }
+   const mx=sx/n,my=sy/n,vx=Math.max(0,sxx/n-mx*mx),vy=Math.max(0,syy/n-my*my),cov=sxy/n-mx*my;
+   const score=((2*mx*my+c1)*(2*cov+c2))/((mx*mx+my*my+c1)*(vx+vy+c2));
+   ssimSum+=Math.max(-1,Math.min(1,score))*n;
+  }
+  const mse=square/(count*3);
+  self.postMessage({metrics:{pixel_count:count,rgb_mae_255:abs/(count*3),rgb_rmse_255:Math.sqrt(mse),rgb_psnr_db:mse===0?null:10*Math.log10(255**2/mse),rgb_identical:mse===0,ssim_luma_8x8:ssimSum/count,rgb_max_channel_error_255:max,rgb_changed_pixels:changed,rgb_changed_percent:100*changed/count,alpha_mae_255:alphaAbs/count,alpha_changed_pixels:alphaChanged},diff:diff.buffer},[diff.buffer]);
+ } catch(error) { self.postMessage({error:error.message}); }
+}
+const $=id=>document.getElementById(id);
+const slots={A:null,B:null}, versions={A:0,B:0};
+let worker=null,workerURL=null,job=0,metrics=null,timer=null,blinkTimer=null,blinkB=false;
+let diffCanvas=null,scale=1,tx=0,ty=0,autoFit=true,drag=null;
+const canvas=$('viewer'),ctx=canvas.getContext('2d',{alpha:false}),stage=$('stage');
+let viewportW=0,viewportH=0;
+const marginNames=['top','right','bottom','left'];
+const format=(value,digits=3)=>value.toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits});
+const margins=()=>Object.fromEntries(marginNames.map(k=>[k,Number($(k).value)]));
+function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
+function stopWorker(){if(worker)worker.terminate();worker=null;if(workerURL)URL.revokeObjectURL(workerURL);workerURL=null;}
+function invalidate(){job++;stopWorker();clearTimeout(timer);metrics=null;diffCanvas=null;for(const id of ['mae','rmse','psnr','ssim','changed','alpha'])$(id).textContent='—';$('exportDiff').disabled=true;$('exportReport').disabled=true;}
+function bounds(){const a=slots.A,b=slots.B,mode=$('mode').value,s=mode==='b'?(b||a):(a||b);if(!s)return {w:1,h:1};if(mode==='side'&&a&&b)return {w:a.width+24+b.width,h:Math.max(a.height,b.height)};return {w:s.width,h:s.height};}
+function fit(){autoFit=true;if(!slots.A&&!slots.B){scale=1;tx=0;ty=0;draw();return;}const b=bounds();scale=Math.max(.01,Math.min(32,(viewportW-36)/b.w,(viewportH-36)/b.h));tx=(viewportW-b.w*scale)/2;ty=(viewportH-b.h*scale)/2;draw();}
+function zoom(next,cx=viewportW/2,cy=viewportH/2){next=Math.max(.01,Math.min(32,next));tx=cx-(cx-tx)*next/scale;ty=cy-(cy-ty)*next/scale;scale=next;autoFit=false;draw();}
+function imageAt(s,x=0){if(!s)return;ctx.drawImage(s.display,x,0);}
+function regionAt(x=0){if(!$('showRegion').checked)return;const s=slots.A||slots.B,m=margins();if(!s||!Object.values(m).every(v=>Number.isInteger(v)&&v>=0)||m.left+m.right>=s.width||m.top+m.bottom>=s.height)return;if(!Object.values(m).some(Boolean))return;ctx.strokeStyle='#ffe18d';ctx.lineWidth=1/scale;ctx.setLineDash([6/scale,4/scale]);ctx.strokeRect(x+m.left,m.top,s.width-m.left-m.right,s.height-m.top-m.bottom);ctx.setLineDash([]);}
+function draw(){
+ ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);ctx.fillStyle='#090c11';ctx.fillRect(0,0,viewportW,viewportH);
+ $('zoomLabel').textContent=Math.round(scale*100)+'%';
+ const a=slots.A,b=slots.B,s=a||b; if(!s)return;
+ ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);ctx.imageSmoothingEnabled=scale<1;
+ const mode=$('mode').value;
+ if(!a||!b){imageAt(s);regionAt();}
+ else if(mode==='side'){imageAt(a);imageAt(b,a.width+24);regionAt();regionAt(a.width+24);}
+ else if(mode==='a'||mode==='b'){imageAt(mode==='a'?a:b);regionAt();}
+ else if(mode==='diff'){if(diffCanvas)ctx.drawImage(diffCanvas,0,0);regionAt();}
+ else if(mode==='blink'){imageAt(blinkB?b:a);regionAt();}
+ else if(mode==='blend'){imageAt(a);ctx.globalAlpha=Number($('blend').value)/100;imageAt(b);ctx.globalAlpha=1;regionAt();}
+ else {imageAt(a);const edge=a.width*Number($('wipe').value)/100;ctx.save();ctx.beginPath();ctx.rect(edge,0,a.width-edge,a.height);ctx.clip();imageAt(b);ctx.restore();ctx.strokeStyle='#fff';ctx.lineWidth=1/scale;ctx.beginPath();ctx.moveTo(edge,0);ctx.lineTo(edge,a.height);ctx.stroke();regionAt();}
+ ctx.restore();
+ let label=!a?'B · Candidate':!b?'A · Reference':mode==='blink'?(blinkB?'B · Candidate':'A · Reference'):mode==='split'?'A left · B right':mode==='side'?'A left · B right':mode==='diff'?'Absolute RGB difference · '+$('gain').value+'× gain':mode==='blend'?'A + B blend':mode==='a'?'A · Reference':'B · Candidate';
+ $('viewLabel').textContent=label+' · scroll to zoom · drag to pan';
+}
+function resize(){const r=stage.getBoundingClientRect();viewportW=r.width;viewportH=r.height;canvas.width=Math.round(viewportW*devicePixelRatio);canvas.height=Math.round(viewportH*devicePixelRatio);if(autoFit)fit();else draw();}
+function configureView(){for(const [id,mode]of [['wipeControl','split'],['blendControl','blend'],['gainControl','diff'],['blinkControl','blink']])$(id).hidden=$('mode').value!==mode;clearInterval(blinkTimer);blinkB=false;if($('mode').value==='blink')blinkTimer=setInterval(()=>{blinkB=!blinkB;draw();},Number($('blinkTime').value));if(autoFit)fit();else draw();}
+function schedule(){invalidate();draw();if(!slots.A||!slots.B)return;status('Calculating comparison…');timer=setTimeout(calculate,180);}
+function calculate(){
+ const a=slots.A,b=slots.B;if(!a||!b)return;
+ if(a.width!==b.width||a.height!==b.height){status(`Dimensions differ: A is ${a.width}×${a.height}, B is ${b.width}×${b.height}. Inspection is available; scoring requires identical dimensions. No resizing is applied.`,true);return;}
+ const m=margins(),threshold=Number($('threshold').value),gain=Number($('gain').value);
+ if(marginNames.some(k=>$(k).value===''||!Number.isInteger(m[k])||m[k]<0)||m.left+m.right>=a.width||m.top+m.bottom>=a.height){status('Invalid margins. Use non-negative whole pixels and leave at least one pixel to compare.',true);return;}
+ if($('threshold').value===''||!Number.isInteger(threshold)||threshold<0||threshold>255){status('RGB tolerance must be a whole number from 0 to 255.',true);return;}
+ const thisJob=job;workerURL=URL.createObjectURL(new Blob(['self.onmessage = '+comparePixels.toString()+';'],{type:'text/javascript'}));
+ try {
+  worker=new Worker(workerURL);
+  worker.onmessage=event=>{if(thisJob!==job)return;const data=event.data;stopWorker();if(data.error){status(data.error,true);return;}metrics=data.metrics;diffCanvas=document.createElement('canvas');diffCanvas.width=a.width;diffCanvas.height=a.height;diffCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.diff),a.width,a.height),0,0);
+   $('mae').textContent=format(metrics.rgb_mae_255);$('rmse').textContent=format(metrics.rgb_rmse_255);$('psnr').textContent=metrics.rgb_identical?'∞':format(metrics.rgb_psnr_db,2);$('ssim').textContent=format(metrics.ssim_luma_8x8,6);$('changed').textContent=format(metrics.rgb_changed_percent,2)+'%';$('alpha').textContent=format(metrics.alpha_mae_255);
+   $('exportDiff').disabled=false;$('exportReport').disabled=false;
+   $('metricDetail').textContent=`${metrics.rgb_changed_pixels.toLocaleString()} / ${metrics.pixel_count.toLocaleString()} RGB pixels above tolerance ${threshold}; maximum channel error ${metrics.rgb_max_channel_error_255}/255. Alpha differs at ${metrics.alpha_changed_pixels.toLocaleString()} pixels (exact comparison).`;
+   status(`Comparison ready · scored ${a.width-m.left-m.right}×${a.height-m.top-m.bottom} pixels · RGB over black + separate alpha · no resampling`);draw();
+  };
+  worker.onerror=()=>{if(thisJob!==job)return;stopWorker();status('Comparison failed. This browser may block local workers, or the images may exceed available memory. Try current Chrome or Edge, or smaller images.',true);};
+  const ac=a.pixels.slice().buffer,bc=b.pixels.slice().buffer;
+  worker.postMessage({width:a.width,height:a.height,a:ac,b:bc,margins:m,threshold,gain},[ac,bc]);
+ }catch(error){stopWorker();status('Cannot start comparison: '+error.message,true);}
+}
+async function load(slot,file){
+ if(!file)return;const version=++versions[slot];invalidate();
+ if(!/\.(png|jpe?g|webp)$/i.test(file.name)){status('Choose a PNG, JPEG or WebP image. EXR/HDR and other formats require an explicit display conversion first.',true);return;}
+ status(`Loading ${file.name}…`);
+ let url=null;
+ try {
+  url=URL.createObjectURL(file);const img=new Image();img.src=url;await img.decode();
+  if(version!==versions[slot]){URL.revokeObjectURL(url);return;}
+  const w=img.naturalWidth,h=img.naturalHeight;
+  if(w*h>40000000)throw Error('Image exceeds the 40-million-pixel limit. Crop or export a smaller image first.');
+  const raw=document.createElement('canvas');raw.width=w;raw.height=h;const rc=raw.getContext('2d',{willReadFrequently:true,colorSpace:'srgb'});rc.drawImage(img,0,0);const pixels=rc.getImageData(0,0,w,h).data;
+  const display=document.createElement('canvas');display.width=w;display.height=h;const dc=display.getContext('2d',{alpha:false,colorSpace:'srgb'});dc.fillStyle='#000';dc.fillRect(0,0,w,h);dc.drawImage(raw,0,0);
+  if(slots[slot])URL.revokeObjectURL(slots[slot].url);
+  slots[slot]={name:file.name,bytes:file.size,type:file.type,width:w,height:h,url,pixels,display};
+  $('thumb'+slot).src=url;$('thumb'+slot).hidden=false;$('name'+slot).textContent=file.name;$('name'+slot).title=file.name;$('info'+slot).textContent=`${w} × ${h} · ${format(file.size/1048576,2)} MiB`;
+  $('empty').hidden=true;$('swap').disabled=!(slots.A&&slots.B);autoFit=true;fit();
+  if(slots.A&&slots.B)schedule();else status('Loaded. Choose the other image to compare.');
+ }catch(error){if(url)URL.revokeObjectURL(url);if(version===versions[slot]){status('Could not load image: '+error.message,true);draw();}}
+}
+function refreshSlots(){for(const k of ['A','B']){const s=slots[k];$('thumb'+k).src=s.url;$('name'+k).textContent=s.name;$('name'+k).title=s.name;$('info'+k).textContent=`${s.width} × ${s.height} · ${format(s.bytes/1048576,2)} MiB`;}fit();schedule();}
+function filesFor(files,slot){const fs=Array.from(files);if(fs.length>=2){load('A',fs[0]);load('B',fs[1]);}else if(fs.length)load(slot||(!slots.A?'A':'B'),fs[0]);}
+for(const k of ['A','B']){
+ $('choose'+k).onclick=()=>$('file'+k).click();$('file'+k).onchange=e=>{load(k,e.target.files[0]);e.target.value='';};
+ const box=$('drop'+k);box.ondragover=e=>{e.preventDefault();box.classList.add('drag');};box.ondragleave=()=>box.classList.remove('drag');box.ondrop=e=>{e.preventDefault();box.classList.remove('drag');filesFor(e.dataTransfer.files,k);};
+}
+stage.ondragover=e=>e.preventDefault();stage.ondrop=e=>{e.preventDefault();filesFor(e.dataTransfer.files);};
+window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>e.preventDefault());
+$('swap').onclick=()=>{versions.A++;versions.B++;[slots.A,slots.B]=[slots.B,slots.A];refreshSlots();};
+$('mode').onchange=configureView;$('blinkTime').onchange=configureView;$('wipe').oninput=draw;$('blend').oninput=draw;$('gain').onchange=schedule;
+for(const id of [...marginNames,'threshold'])$(id).addEventListener('input',schedule);
+$('showRegion').onchange=draw;$('resetRegion').onclick=()=>{for(const k of marginNames)$(k).value='0';schedule();};
+$('fit').onclick=fit;$('actual').onclick=()=>zoom(1);$('zoomIn').onclick=()=>zoom(scale*1.5);$('zoomOut').onclick=()=>zoom(scale/1.5);
+canvas.onwheel=e=>{e.preventDefault();const r=canvas.getBoundingClientRect();zoom(scale*Math.exp(-e.deltaY*.001),e.clientX-r.left,e.clientY-r.top);};
+canvas.onpointerdown=e=>{if(e.button!==0)return;canvas.focus();canvas.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,tx,ty};};
+canvas.onpointerup=()=>drag=null;canvas.onpointercancel=()=>drag=null;canvas.onlostpointercapture=()=>drag=null;
+canvas.onpointermove=e=>{
+ if(drag){tx=drag.tx+e.clientX-drag.x;ty=drag.ty+e.clientY-drag.y;autoFit=false;draw();}
+ const s=slots.A||slots.B;if(!s)return;const r=canvas.getBoundingClientRect();let x=Math.floor((e.clientX-r.left-tx)/scale),y=Math.floor((e.clientY-r.top-ty)/scale);
+ if($('mode').value==='side'&&slots.A&&slots.B&&x>=slots.A.width+24)x-=slots.A.width+24;
+ const p=(slot)=>{if(!slot||x<0||y<0||x>=slot.width||y>=slot.height)return null;return Array.from(slot.pixels.slice((y*slot.width+x)*4,(y*slot.width+x)*4+4));};
+ const a=p(slots.A),b=p(slots.B);if(!a&&!b){$('pixel').textContent='Move over an image to inspect a pixel.';return;}
+ $('pixel').textContent=`(${x}, ${y}) · A RGBA ${a?a.join(', '):'—'} · B RGBA ${b?b.join(', '):'—'}`;
+};
+canvas.onkeydown=e=>{if(e.key.toLowerCase()==='f'){fit();e.preventDefault();}else if(e.key==='1'){zoom(1);e.preventDefault();}else if(e.key==='+'||e.key==='='){zoom(scale*1.5);e.preventDefault();}else if(e.key==='-'){zoom(scale/1.5);e.preventDefault();}};
+function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+$('exportDiff').onclick=()=>{if(!diffCanvas||!metrics)return;diffCanvas.toBlob(blob=>{if(blob)download(blob,'image-difference-'+$('gain').value+'x.png');else status('Could not encode the difference PNG.',true);},'image/png');};
+$('exportReport').onclick=()=>{
+ if(!metrics)return;
+ const meta=s=>({name:s.name,width:s.width,height:s.height,file_bytes:s.bytes,mime_type:s.type});
+ const report={tool:'Image Compare',schema_version:1,created_utc:new Date().toISOString(),reference:meta(slots.A),candidate:meta(slots.B),scored_region_margins_px:margins(),rgb_changed_tolerance_255:Number($('threshold').value),difference_gain:Number($('gain').value),metrics,method:{rgb:'Browser-decoded 8-bit sRGB composited over black; rounded to integer channels. Alpha scored separately from canvas readback.',psnr:'10 log10(255^2 / RGB MSE); null with rgb_identical=true means positive infinity.',ssim:'Rec.709 luma, non-overlapping 8x8 population-statistic blocks, C1=2.55^2 C2=7.65^2; partial edge blocks weighted by pixel count.',resampling:'None',difference_png:'Full source dimensions, absolute RGB error times gain; black outside scored region.',interpretation:'No automatic verdict. Noise, color management and alignment must be controlled; scores do not identify a codec or establish renderer correctness.'},browser:navigator.userAgent};
+ download(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),'image-comparison.json');
+};
+new ResizeObserver(resize).observe(stage);configureView();
+window.addEventListener('beforeunload',()=>{stopWorker();clearInterval(blinkTimer);for(const s of Object.values(slots))if(s)URL.revokeObjectURL(s.url);});
+</script>
+</body>
+</html>

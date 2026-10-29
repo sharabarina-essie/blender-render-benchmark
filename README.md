@@ -6,6 +6,12 @@ CPU-vs-GPU A/B**. The git repo is **code only** — a `bootstrap` step downloads
 Blender builds and test models from official blender.org URLs, so
 `clone → bootstrap → run` works on any Windows machine with a GPU + drivers.
 
+For a native workstation baseline of an arbitrary scene, use
+[Native render validation](docs/NATIVE_RENDER_VALIDATION.md). It runs stock Cycles
+(CUDA/GPU OIDN and OptiX/OptiX denoising) plus EEVEE in the Blender GUI, saves PNGs,
+and records the selected GPUs and effective settings. Downloaded scenes stay out
+of Git.
+
 Two suites:
 - **cycles** — CUDA + OptiX on each version's Cycles/splash scene.
 - **eevee** — EEVEE on EEVEE demo scenes.
